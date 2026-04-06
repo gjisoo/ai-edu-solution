@@ -2,18 +2,19 @@
   "name": "ai-edu-solution",
   "private": true,
   "version": "1.0.0",
-  "description": "Next.js + TypeScript workspace for the AI education solution project",
+  "description": "Dev-Radar MVP dashboard built with Next.js and TypeScript",
   "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit --incremental false -p tsconfig.typecheck.json",
     "test": "echo \"No tests configured yet\""
   },
   "keywords": [
+    "dev-radar",
+    "nextjs",
     "typescript",
-    "education",
     "ai"
   ],
   "author": "",
@@ -25,11 +26,20 @@
     "@types/node": "^25.5.2",
     "@types/react": "^18.3.28",
     "@types/react-dom": "^18.3.7",
+    "autoprefixer": "^10.4.27",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^3.4.17",
+    "tailwindcss-animate": "^1.0.7",
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.7.0",
     "next": "^14.2.35",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "recharts": "^3.8.1",
+    "tailwind-merge": "^3.5.0"
   }
 }
