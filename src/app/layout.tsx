@@ -18,9 +18,9 @@ const gowunDodum = Gowun_Dodum({
 })
 
 export const metadata: Metadata = {
-  title: 'Dev-Radar | AI 기반 개발 역량 실시간 관제 솔루션',
+  title: 'Dev-Radar | Live GitHub Repository Analysis',
   description:
-    'IDE, GitHub, 오류 로그, 채용 공고를 연결해 학습자의 개발 역량을 실시간으로 시각화하는 Dev-Radar 대시보드 MVP입니다.',
+    'Analyze a GitHub repository with live metadata, commit signals, stack heuristics, and market-fit scoring.',
 }
 
 export default function RootLayout({

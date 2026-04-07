@@ -6,4 +6,5 @@ out/
 *.tsbuildinfo
 .env
 .env.*
+!.env.example
 next-env.d.ts

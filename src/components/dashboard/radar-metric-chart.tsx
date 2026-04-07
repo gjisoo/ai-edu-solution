@@ -15,12 +15,12 @@ const labelMap: Array<{
   key: keyof DevMetric
   label: string
 }> = [
-  { key: 'readability', label: '가독성' },
-  { key: 'efficiency', label: '효율성' },
-  { key: 'security', label: '보안성' },
-  { key: 'architecture', label: '아키텍처' },
-  { key: 'consistency', label: '일관성' },
-  { key: 'modernity', label: '현대성' },
+  { key: 'readability', label: 'Readability' },
+  { key: 'efficiency', label: 'Efficiency' },
+  { key: 'security', label: 'Security' },
+  { key: 'architecture', label: 'Architecture' },
+  { key: 'consistency', label: 'Consistency' },
+  { key: 'modernity', label: 'Modernity' },
 ]
 
 type RadarMetricChartProps = {
@@ -73,7 +73,7 @@ export function RadarMetricChart({ metrics }: RadarMetricChartProps) {
               <div>
                 <p className="text-sm font-medium text-slate-500">{item.subject}</p>
                 <strong className="mt-2 block text-2xl font-black tracking-tight text-slate-800">
-                  {item.score}점
+                  {item.score}%
                 </strong>
               </div>
               <span className="rounded-full bg-[#f4efff] px-3 py-1 text-xs font-semibold text-[#7f70eb]">

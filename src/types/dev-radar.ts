@@ -37,8 +37,32 @@ export interface ActivityEvent {
   detail: string
 }
 
+export interface RepositoryLanguage {
+  name: string
+  share: number
+}
+
+export interface RepositorySummary {
+  owner: string
+  name: string
+  fullName: string
+  url: string
+  description: string | null
+  visibility: string
+  defaultBranch: string
+  primaryLanguage: string | null
+  mainLanguages: RepositoryLanguage[]
+  stars: number
+  forks: number
+  openIssues: number
+  lastPushAt: string
+  updatedAt: string
+  topics: string[]
+}
+
 export interface DashboardAnalysis {
   githubId: string
+  repository: RepositorySummary
   collectedAt: string
   dailyLines: number
   cleanCodeScore: number

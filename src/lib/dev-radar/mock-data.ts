@@ -4,6 +4,7 @@ import type {
   DashboardAnalysis,
   DevMetric,
   MarketFit,
+  RepositorySummary,
   ReviewSuggestion,
 } from '@/types/dev-radar'
 
@@ -13,6 +14,32 @@ function hashString(value: string) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
+}
+
+function createRepository(fullName: string): RepositorySummary {
+  const [owner, name] = fullName.split('/')
+
+  return {
+    owner,
+    name,
+    fullName,
+    url: `https://github.com/${fullName}`,
+    description: 'Demo repository summary used before the live GitHub analysis is connected.',
+    visibility: 'public',
+    defaultBranch: 'main',
+    primaryLanguage: 'TypeScript',
+    mainLanguages: [
+      { name: 'TypeScript', share: 62 },
+      { name: 'CSS', share: 18 },
+      { name: 'MDX', share: 12 },
+    ],
+    stars: 128,
+    forks: 24,
+    openIssues: 7,
+    lastPushAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    topics: ['dashboard', 'analytics', 'nextjs'],
+  }
 }
 
 function createMetrics(seed: number): DevMetric {
@@ -29,17 +56,17 @@ function createMetrics(seed: number): DevMetric {
 function createMarketFits(seed: number): MarketFit[] {
   return [
     {
-      targetJob: 'Backend Engineer · Node.js / TypeScript',
+      targetJob: 'Backend Engineer',
       similarityScore: clamp(70 + (seed % 19), 0, 100),
-      missingTech: ['테스트 자동화', 'Docker', '성능 최적화'],
+      missingTech: ['CI pipeline', 'Docker', 'observability'],
     },
     {
-      targetJob: 'Fullstack Engineer · React / Next.js',
+      targetJob: 'Fullstack Engineer',
       similarityScore: clamp(62 + (seed % 17), 0, 100),
-      missingTech: ['디자인 시스템', 'E2E 테스트', '접근성'],
+      missingTech: ['design docs', 'E2E tests', 'accessibility'],
     },
     {
-      targetJob: 'Platform Engineer · Cloud / Infra',
+      targetJob: 'Platform Engineer',
       similarityScore: clamp(48 + (seed % 15), 0, 100),
       missingTech: ['CI/CD', 'Observability', 'Kubernetes'],
     },
@@ -50,24 +77,24 @@ function createReviewSuggestions(seed: number): ReviewSuggestion[] {
   return [
     {
       id: `review-${seed}-1`,
-      title: '함수 책임 분리',
-      impact: '가독성 + 아키텍처',
+      title: 'Separate core logic from integration code',
+      impact: 'Readability + architecture',
       description:
-        '비즈니스 로직과 외부 IO를 분리하면 테스트 가능성이 높아지고 함수 단일 책임 원칙 준수 점수가 함께 상승합니다.',
+        'Keeping domain logic separate from network and file access makes testing easier and raises the architectural clarity score.',
     },
     {
       id: `review-${seed}-2`,
-      title: '에러 핸들링 강화',
-      impact: '보안성 + 안정성',
+      title: 'Harden error handling paths',
+      impact: 'Security + stability',
       description:
-        '비동기 흐름에서 예외가 누락되는 패턴이 보여 서버 액션과 API 레이어 모두에서 공통 예외 처리 유틸이 필요합니다.',
+        'Async boundaries should surface a consistent failure mode so that API handlers and background jobs stay easier to reason about.',
     },
     {
       id: `review-${seed}-3`,
-      title: '커밋 단위 분리',
-      impact: '협업성 + 일관성',
+      title: 'Keep commit scope tighter',
+      impact: 'Reviewability + consistency',
       description:
-        '기능 추가와 리팩터링을 분리된 커밋으로 남기면 변경 의도가 선명해져 리뷰 효율과 팀 생산성이 좋아집니다.',
+        'Smaller commits make intent easier to trace and improve review speed for collaborators joining the codebase later.',
     },
   ]
 }
@@ -76,33 +103,33 @@ function createConceptGaps(seed: number): ConceptGap[] {
   return [
     {
       id: `gap-${seed}-1`,
-      title: '비동기 예외 전파',
+      title: 'Async error propagation',
       category: 'build error',
       severity: 'high',
-      timestamp: '오늘 11:14',
+      timestamp: 'Apr 7, 11:14 AM',
       summary:
-        'Promise 체인과 async/await이 혼합된 구간에서 예외 전파가 누락되어 빌드 오류와 런타임 불안정이 반복적으로 발생했습니다.',
-      recommendation: 'Promise 에러 흐름, try/catch 범위, Result 패턴 복습',
+        'Mixed promise chains and async or await flows can hide failures and make production bugs harder to trace back to a specific boundary.',
+      recommendation: 'Review promise handling strategy and standardize error wrapping around async boundaries.',
     },
     {
       id: `gap-${seed}-2`,
-      title: '자료구조 선택 근거',
+      title: 'Data structure selection',
       category: 'algorithm pattern',
       severity: 'medium',
-      timestamp: '어제 18:20',
+      timestamp: 'Apr 6, 06:20 PM',
       summary:
-        '문제는 해결되지만 배열과 맵, 셋 중 어떤 구조를 왜 선택했는지 설명 근거가 약해 효율성 지표에 영향을 주고 있습니다.',
-      recommendation: '해시 기반 컬렉션과 시간 복잡도 비교 정리',
+        'A solution may work correctly but still undersell engineering depth if the tradeoffs behind array, map, and set choices are not visible.',
+      recommendation: 'Practice comparing time complexity and collection semantics before locking in an implementation.',
     },
     {
       id: `gap-${seed}-3`,
-      title: '테스트 더블 설계',
+      title: 'Test double strategy',
       category: 'review feedback',
       severity: 'low',
-      timestamp: '3일 전 09:05',
+      timestamp: 'Apr 3, 09:05 AM',
       summary:
-        '핵심 테스트는 통과하지만 외부 의존성 분리를 더 선명하게 하면 유지보수성과 협업성이 함께 상승할 수 있습니다.',
-      recommendation: 'mock, stub, spy 사용 구분과 의존성 역전 패턴 복습',
+        'Tests pass, but the line between mocks, stubs, and spies is still thin enough that future contributors could struggle to extend the suite cleanly.',
+      recommendation: 'Document when to use mocks, stubs, and spies so future tests stay predictable.',
     },
   ]
 }
@@ -112,22 +139,22 @@ function createActivity(seed: number, githubId: string): ActivityEvent[] {
     {
       id: `event-${seed}-1`,
       time: '09:42',
-      label: 'VS Code 세션 동기화 완료',
-      detail: `@${githubId}의 오늘 첫 코딩 세션 64분이 집계되었고 TypeScript 파일 8개가 정적 분석 대상으로 등록되었습니다.`,
+      label: 'Demo scan completed',
+      detail: `A seeded demo profile for ${githubId} was generated with static repository and commit signals.`,
     },
     {
       id: `event-${seed}-2`,
       time: '12:08',
-      label: 'GitHub 커밋 품질 갱신',
+      label: 'Commit hygiene snapshot',
       detail:
-        '최근 5개 커밋 중 4개가 명확한 작업 의도와 범위를 포함해 협업성 축 점수가 상승했습니다.',
+        'Recent commit messages were seeded to look reasonably descriptive so the demo can showcase review and collaboration signals.',
     },
     {
       id: `event-${seed}-3`,
       time: '14:31',
-      label: '채용 공고 매칭 완료',
+      label: 'Market-fit profile refreshed',
       detail:
-        '백엔드 JD와의 벡터 유사도가 재계산되었고 테스트 자동화 경험이 핵심 보완 포인트로 식별되었습니다.',
+        'Role-fit cards were recalculated so the dashboard can show how the same repository reads across different hiring tracks.',
     },
   ]
 }
@@ -135,11 +162,13 @@ function createActivity(seed: number, githubId: string): ActivityEvent[] {
 export function createDashboardAnalysis(githubId: string): DashboardAnalysis {
   const seed = hashString(githubId)
   const metrics = createMetrics(seed)
+  const normalizedRepository = githubId.includes('/') ? githubId : `demo/${githubId}`
 
   return {
-    githubId,
-    collectedAt: new Intl.DateTimeFormat('ko-KR', {
-      month: 'long',
+    githubId: normalizedRepository,
+    repository: createRepository(normalizedRepository),
+    collectedAt: new Intl.DateTimeFormat('en-US', {
+      month: 'short',
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
@@ -156,12 +185,12 @@ export function createDashboardAnalysis(githubId: string): DashboardAnalysis {
     ),
     focusArea:
       metrics.security < 70
-        ? '보안 입력 검증과 예외 처리 품질 보강'
-        : '아키텍처 분리와 테스트 자동화 레벨업',
+        ? 'Harden security review and failure handling'
+        : 'Raise the architecture and automation signal',
     metrics,
     marketFits: createMarketFits(seed),
     conceptGaps: createConceptGaps(seed),
     reviewSuggestions: createReviewSuggestions(seed),
-    activity: createActivity(seed, githubId),
+    activity: createActivity(seed, normalizedRepository),
   }
 }

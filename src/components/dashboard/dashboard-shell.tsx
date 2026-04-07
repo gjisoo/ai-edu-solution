@@ -1,16 +1,23 @@
 'use client'
 
-import { useMemo, useState, useTransition } from 'react'
+import { type FormEvent, useState } from 'react'
 import {
   Activity,
+  AlertCircle,
   Bot,
   BriefcaseBusiness,
+  ExternalLink,
   GitBranch,
+  Loader2,
   Radar,
   ShieldAlert,
   Sparkles,
+  Star,
 } from 'lucide-react'
 
+import { parseGitHubRepositoryInput } from '@/lib/github/parse-repo-input'
+import { cn } from '@/lib/utils'
+import type { DashboardAnalysis } from '@/types/dev-radar'
 import { DashboardSkeleton } from '@/components/dashboard/dashboard-skeleton'
 import { RadarMetricChart } from '@/components/dashboard/radar-metric-chart'
 import { Button } from '@/components/ui/button'
@@ -23,71 +30,96 @@ import {
 } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
-import { createDashboardAnalysis } from '@/lib/dev-radar/mock-data'
-import { cn } from '@/lib/utils'
 
-const summaryConfig = [
+type SummaryKey = 'cleanCodeScore' | 'dailyLines' | 'marketFitAverage' | 'conceptGapCount'
+
+const summaryConfig: Array<{
+  key: SummaryKey
+  label: string
+  unit: string
+  icon: typeof Sparkles
+}> = [
   {
     key: 'cleanCodeScore',
-    label: '클린 코드 점수',
-    unit: '점',
+    label: 'Clean Code Score',
+    unit: 'pts',
     icon: Sparkles,
   },
   {
     key: 'dailyLines',
-    label: '일일 코드량',
+    label: 'Est. Daily LoC',
     unit: 'LoC',
     icon: Activity,
   },
   {
     key: 'marketFitAverage',
-    label: '시장 적합도 평균',
+    label: 'Market Fit Avg',
     unit: '%',
     icon: BriefcaseBusiness,
   },
   {
     key: 'conceptGapCount',
-    label: '개념 결손 포착',
-    unit: '건',
+    label: 'Concept Gaps',
+    unit: 'items',
     icon: ShieldAlert,
   },
 ] as const
 
 export function DashboardShell() {
-  const [githubId, setGithubId] = useState('dev-radar-demo')
-  const [submittedId, setSubmittedId] = useState<string | null>(null)
-  const [analysis, setAnalysis] = useState(() => createDashboardAnalysis('dev-radar-demo'))
+  const [repoInput, setRepoInput] = useState('https://github.com/vercel/next.js')
+  const [submittedRepo, setSubmittedRepo] = useState<string | null>(null)
+  const [analysis, setAnalysis] = useState<DashboardAnalysis | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
-  const [isPending, startTransition] = useTransition()
 
-  const headlineStats = useMemo(
-    () => ({
-      cleanCodeScore: analysis.cleanCodeScore,
-      dailyLines: analysis.dailyLines,
-      marketFitAverage: Math.round(
-        analysis.marketFits.reduce((sum, item) => sum + item.similarityScore, 0) /
-          analysis.marketFits.length,
-      ),
-      conceptGapCount: analysis.conceptGaps.length,
-    }),
-    [analysis],
-  )
+  const headlineStats = analysis
+    ? {
+        cleanCodeScore: analysis.cleanCodeScore,
+        dailyLines: analysis.dailyLines,
+        marketFitAverage: Math.round(
+          analysis.marketFits.reduce((sum, item) => sum + item.similarityScore, 0) /
+            analysis.marketFits.length,
+        ),
+        conceptGapCount: analysis.conceptGaps.length,
+      }
+    : null
 
-  function handleAnalyze() {
-    const normalized = githubId.trim().replace(/^@/, '')
-    if (!normalized) {
-      return
-    }
+  async function handleAnalyze(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
 
-    setSubmittedId(normalized)
-    setIsLoading(true)
+    try {
+      const parsed = parseGitHubRepositoryInput(repoInput)
 
-    window.setTimeout(() => {
-      startTransition(() => {
-        setAnalysis(createDashboardAnalysis(normalized))
-        setIsLoading(false)
+      setError(null)
+      setSubmittedRepo(parsed.normalizedFullName)
+      setIsLoading(true)
+
+      const response = await fetch('/api/analyze-repo', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          repo: repoInput,
+        }),
       })
-    }, 1200)
+
+      const payload = (await response.json()) as DashboardAnalysis | { error?: string }
+
+      if (isApiError(payload)) {
+        throw new Error(payload.error ?? 'Repository analysis failed.')
+      }
+
+      if (!response.ok) {
+        throw new Error('Repository analysis failed.')
+      }
+
+      setAnalysis(payload)
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Repository analysis failed.')
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -101,27 +133,27 @@ export function DashboardShell() {
             </div>
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.24em] text-[#ff8ca6]">
-                Real-time growth tracking
+                Live Repository Signal
               </p>
               <h1 className="mt-2 font-display text-3xl tracking-tight text-slate-800 sm:text-4xl">
                 Dev-Radar Dashboard
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base">
-                IDE와 GitHub 활동을 바탕으로 코드 품질, 개념 결손, 채용 시장 적합도를
-                실시간으로 시각화하는 고정밀 개발 역량 관제 화면입니다.
+                Paste a GitHub repository URL and we will turn real repo metadata, root structure,
+                language mix, and recent commit history into a live engineering signal board.
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-600">
-              IDE Live Sync
+              GitHub Live Scan
             </span>
             <span className="rounded-full border border-[#d9d4ff] bg-[#f3f0ff] px-3 py-1 text-xs font-semibold text-[#7163ea]">
-              GitHub Connected
+              Public Repo Ready
             </span>
             <span className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-500">
-              JD Matching Active
+              Token Optional
             </span>
           </div>
         </header>
@@ -134,44 +166,63 @@ export function DashboardShell() {
                 Analysis Trigger
               </div>
               <CardTitle className="font-display text-3xl text-slate-800">
-                GitHub ID를 입력하면 Dev-Radar가 즉시 역량 지도를 생성합니다
+                Analyze a real GitHub repository
               </CardTitle>
               <CardDescription className="max-w-2xl text-sm leading-6 text-slate-600">
-                공모전 MVP에서는 GitHub ID를 입력하면 실시간 분석 UX를 시연하고, 이후
-                클린 코드 점수, 6각형 역량 지표, Market-Fit Index가 순차적으로 활성화되는
-                흐름을 보여줍니다.
+                Supported inputs: full GitHub URL, SSH URL, or <code>owner/repo</code>. Public
+                repositories work immediately, and <code>GITHUB_TOKEN</code> unlocks better rate
+                limits plus private repo access.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
-              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+              <form onSubmit={handleAnalyze} className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
                 <Input
-                  value={githubId}
-                  onChange={(event) => setGithubId(event.target.value)}
-                  placeholder="예: radar-student-01"
+                  value={repoInput}
+                  onChange={(event) => setRepoInput(event.target.value)}
+                  placeholder="https://github.com/vercel/next.js"
                   className="h-12 border-[#eadfdb] bg-white text-base text-slate-800 placeholder:text-slate-400"
                 />
                 <Button
-                  type="button"
-                  onClick={handleAnalyze}
-                  disabled={isPending || isLoading}
-                  className="h-12 min-w-[148px] bg-[#7d6fff] text-white hover:bg-[#6f61f1]"
+                  type="submit"
+                  disabled={isLoading}
+                  className="h-12 min-w-[156px] bg-[#7d6fff] text-white hover:bg-[#6f61f1]"
                 >
-                  {isPending || isLoading ? '분석 중...' : '분석 시작'}
+                  {isLoading ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Scanning...
+                    </span>
+                  ) : (
+                    'Analyze Repo'
+                  )}
                 </Button>
-              </div>
+              </form>
+
+              {error ? (
+                <div className="rounded-[24px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <p>{error}</p>
+                  </div>
+                </div>
+              ) : null}
 
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
-                  <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Input Source</p>
-                  <p className="mt-2 text-lg font-semibold text-slate-800">VS Code + GitHub</p>
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Accepted Input</p>
+                  <p className="mt-2 text-lg font-semibold text-slate-800">URL / owner/repo</p>
                 </div>
                 <div className="rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
-                  <p className="text-xs uppercase tracking-[0.18em] text-slate-400">AI Layer</p>
-                  <p className="mt-2 text-lg font-semibold text-slate-800">LLM + RAG + Static Analysis</p>
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Analysis Mode</p>
+                  <p className="mt-2 text-lg font-semibold text-slate-800">
+                    GitHub API + heuristics
+                  </p>
                 </div>
                 <div className="rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
                   <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Primary Output</p>
-                  <p className="mt-2 text-lg font-semibold text-slate-800">Hexagon Metric + Market Fit</p>
+                  <p className="mt-2 text-lg font-semibold text-slate-800">
+                    Repo health + market fit
+                  </p>
                 </div>
               </div>
             </CardContent>
@@ -184,34 +235,43 @@ export function DashboardShell() {
                 System Status
               </div>
               <CardTitle className="font-display text-3xl text-slate-800">
-                성장 안개를 걷어내는 정량형 관제
+                Live scan status and current focus
               </CardTitle>
               <CardDescription className="text-sm leading-6 text-slate-600">
-                잔디 수가 아닌 코드 질, 설계 감각, 오류 패턴, 채용 시장 적합도를 함께
-                묶어서 보여주는 것이 Dev-Radar의 핵심 가치입니다.
+                This MVP is now grounded in live GitHub repository data. Narrative insights are
+                still heuristic-based, which keeps the flow fast while we prepare the AI layer.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 text-sm text-slate-600">
               <div className="rounded-[24px] border border-emerald-200 bg-emerald-50/80 p-4">
                 <p className="text-xs uppercase tracking-[0.18em] text-emerald-500">Current Focus</p>
-                <p className="mt-2 text-lg font-semibold text-slate-800">{analysis.focusArea}</p>
+                <p className="mt-2 text-lg font-semibold text-slate-800">
+                  {analysis?.focusArea ?? 'Paste a repository to generate the first live signal.'}
+                </p>
               </div>
               <div className="rounded-[24px] border border-[#d9d4ff] bg-[#f4efff] p-4">
                 <p className="text-xs uppercase tracking-[0.18em] text-[#7d6fff]">Last Updated</p>
-                <p className="mt-2 text-lg font-semibold text-slate-800">{analysis.collectedAt}</p>
+                <p className="mt-2 text-lg font-semibold text-slate-800">
+                  {analysis?.collectedAt ?? 'Waiting for first scan'}
+                </p>
               </div>
-              <p className="rounded-[24px] border border-[#eadfdb] bg-white/85 p-4 leading-6 text-slate-600">
-                {submittedId
-                  ? `@${submittedId} 프로필을 기준으로 최신 대시보드를 생성했습니다.`
-                  : '데모 계정을 기준으로 초기 대시보드를 미리 로드해두었습니다.'}
-              </p>
+              <div className="rounded-[24px] border border-[#eadfdb] bg-white/85 p-4">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Latest Repository</p>
+                <p className="mt-2 text-lg font-semibold text-slate-800">
+                  {analysis?.repository.fullName ?? submittedRepo ?? 'No repository analyzed yet'}
+                </p>
+                <p className="mt-2 leading-6 text-slate-600">
+                  {analysis?.repository.description ??
+                    'The next scan will pull repository metadata, language stats, and recent commit activity from GitHub.'}
+                </p>
+              </div>
             </CardContent>
           </Card>
         </section>
 
-        {isLoading || isPending ? (
+        {isLoading ? (
           <DashboardSkeleton />
-        ) : (
+        ) : analysis && headlineStats ? (
           <>
             <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               {summaryConfig.map((item) => {
@@ -251,11 +311,11 @@ export function DashboardShell() {
                         Live Hexagon Metric
                       </p>
                       <CardTitle className="mt-2 text-2xl text-slate-800">
-                        6각형 역량 지표가 실시간으로 갱신됩니다
+                        Repository quality signal by category
                       </CardTitle>
                     </div>
                     <span className="rounded-full border border-[#d9d4ff] bg-[#f4efff] px-3 py-1 text-xs font-semibold text-[#7d6fff]">
-                      animated update
+                      live update
                     </span>
                   </div>
                 </CardHeader>
@@ -269,10 +329,10 @@ export function DashboardShell() {
                   <CardHeader>
                     <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.2em] text-[#c66ab4]">
                       <Bot className="h-4 w-4" />
-                      AI Peer Review
+                      Review Suggestions
                     </div>
                     <CardTitle className="text-2xl text-slate-800">
-                      커밋 전에 받은 실무 관점 개선 제안
+                      Highest-leverage improvements for this repo
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3">
@@ -300,7 +360,7 @@ export function DashboardShell() {
                       Live Activity Feed
                     </div>
                     <CardTitle className="text-2xl text-slate-800">
-                      IDE와 GitHub에서 들어오는 학습 이벤트 로그
+                      What we actually detected from GitHub
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
@@ -328,11 +388,11 @@ export function DashboardShell() {
                     Market-Fit Index
                   </div>
                   <CardTitle className="text-2xl text-slate-800">
-                    채용 공고와 현재 기술 스택의 유사도 비교
+                    Which engineering tracks this repo supports best
                   </CardTitle>
                   <CardDescription className="text-slate-600">
-                    JD 임베딩과 프로젝트 스택 비교를 기반으로 적합도를 계산하고, 아직 부족한
-                    기술 요소를 함께 제시합니다.
+                    These scores are inferred from repo structure, stack signals, workflow files,
+                    and recent activity rather than AI-generated career advice.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -345,7 +405,7 @@ export function DashboardShell() {
                         <div>
                           <strong className="text-slate-800">{job.targetJob}</strong>
                           <p className="mt-2 text-sm text-slate-600">
-                            부족 기술: {job.missingTech.join(', ')}
+                            Missing signal: {job.missingTech.join(', ')}
                           </p>
                         </div>
                         <span className="rounded-full bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-600">
@@ -367,10 +427,10 @@ export function DashboardShell() {
                   <CardHeader>
                     <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.2em] text-[#e39d4f]">
                       <ShieldAlert className="h-4 w-4" />
-                      ConceptGap Tracker
+                      Gap Tracker
                     </div>
                     <CardTitle className="text-2xl text-slate-800">
-                      오류와 오답 패턴으로 추적한 개념 결손 타임라인
+                      Concrete gaps surfaced by the live scan
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
@@ -382,12 +442,9 @@ export function DashboardShell() {
                         <span
                           className={cn(
                             'absolute left-0 top-1 flex h-6 w-6 items-center justify-center rounded-full border bg-white text-[10px] font-bold uppercase shadow-sm',
-                            gap.severity === 'high' &&
-                              'border-red-200 text-red-400',
-                            gap.severity === 'medium' &&
-                              'border-amber-200 text-amber-500',
-                            gap.severity === 'low' &&
-                              'border-emerald-200 text-emerald-500',
+                            gap.severity === 'high' && 'border-red-200 text-red-400',
+                            gap.severity === 'medium' && 'border-amber-200 text-amber-500',
+                            gap.severity === 'low' && 'border-emerald-200 text-emerald-500',
                           )}
                         >
                           {gap.severity}
@@ -404,7 +461,7 @@ export function DashboardShell() {
                           </p>
                           <p className="mt-3 text-sm leading-6 text-slate-600">{gap.summary}</p>
                           <p className="mt-3 rounded-2xl bg-[#fff4ea] px-3 py-2 text-sm text-slate-600">
-                            추천 학습: {gap.recommendation}
+                            Recommendation: {gap.recommendation}
                           </p>
                         </div>
                       </article>
@@ -416,31 +473,129 @@ export function DashboardShell() {
                   <CardHeader>
                     <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.2em] text-[#7d6fff]">
                       <Sparkles className="h-4 w-4" />
-                      MVP Roadmap
+                      Repository Snapshot
                     </div>
                     <CardTitle className="text-2xl text-slate-800">
-                      공모전 시연 이후 확장 계획
+                      Real repository metadata at a glance
                     </CardTitle>
                   </CardHeader>
-                  <CardContent>
-                    <ol className="space-y-3 text-sm leading-6 text-slate-600">
-                      <li className="rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
-                        1단계: VS Code 확장에서 Python/JS 대상 클린 코드 점수와 일일 코드량 시각화
-                      </li>
-                      <li className="rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
-                        2단계: GitHub 전체 저장소 분석과 채용 공고 매칭 엔진 탑재
-                      </li>
-                      <li className="rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
-                        3단계: ATS 연동 및 Dev-Radar 인증서 기반 공식 채용 지표 제안
-                      </li>
-                    </ol>
+                  <CardContent className="space-y-4 text-sm text-slate-600">
+                    <div className="rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Repository</p>
+                          <p className="mt-2 text-lg font-semibold text-slate-800">
+                            {analysis.repository.fullName}
+                          </p>
+                        </div>
+                        <a
+                          href={analysis.repository.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 rounded-full border border-[#eadfdb] bg-white px-3 py-1 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-50"
+                        >
+                          Open on GitHub
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </a>
+                      </div>
+                      <p className="mt-3 leading-6 text-slate-600">
+                        {analysis.repository.description ?? 'No repository description was provided on GitHub.'}
+                      </p>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="rounded-[20px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
+                        <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Branch</p>
+                        <p className="mt-2 font-semibold text-slate-800">
+                          {analysis.repository.defaultBranch}
+                        </p>
+                      </div>
+                      <div className="rounded-[20px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
+                        <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Visibility</p>
+                        <p className="mt-2 font-semibold capitalize text-slate-800">
+                          {analysis.repository.visibility}
+                        </p>
+                      </div>
+                      <div className="rounded-[20px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
+                        <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Primary Language</p>
+                        <p className="mt-2 font-semibold text-slate-800">
+                          {analysis.repository.primaryLanguage ?? 'Unknown'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="rounded-[20px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
+                        <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Stars</p>
+                        <p className="mt-2 flex items-center gap-2 font-semibold text-slate-800">
+                          <Star className="h-4 w-4 text-amber-400" />
+                          {formatNumber(analysis.repository.stars)}
+                        </p>
+                      </div>
+                      <div className="rounded-[20px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
+                        <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Forks</p>
+                        <p className="mt-2 font-semibold text-slate-800">
+                          {formatNumber(analysis.repository.forks)}
+                        </p>
+                      </div>
+                      <div className="rounded-[20px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
+                        <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Open Issues</p>
+                        <p className="mt-2 font-semibold text-slate-800">
+                          {formatNumber(analysis.repository.openIssues)}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Top Languages</p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {analysis.repository.mainLanguages.map((language) => (
+                          <span
+                            key={language.name}
+                            className="rounded-full border border-[#d9d4ff] bg-[#f4efff] px-3 py-1 text-xs font-semibold text-[#7163ea]"
+                          >
+                            {language.name} {language.share}%
+                          </span>
+                        ))}
+                      </div>
+                    </div>
                   </CardContent>
                 </Card>
               </div>
             </section>
           </>
+        ) : (
+          <Card className="border-white/70 bg-white/82 shadow-[0_24px_56px_rgba(235,193,166,0.16)]">
+            <CardContent className="p-8">
+              <div className="max-w-3xl space-y-4">
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#7d6fff]">
+                  First Live Scan
+                </p>
+                <h2 className="font-display text-3xl text-slate-800">
+                  The dashboard is ready for a real repository
+                </h2>
+                <p className="text-sm leading-7 text-slate-600 sm:text-base">
+                  Start with a public repo such as <code>vercel/next.js</code> or your own
+                  repository URL. The current pipeline analyzes live GitHub metadata, root files,
+                  language share, and recent commits. AI-generated narrative explanations can be
+                  layered in next.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
         )}
       </div>
     </main>
   )
+}
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat('en-US', {
+    notation: value >= 1000 ? 'compact' : 'standard',
+    maximumFractionDigits: 1,
+  }).format(value)
+}
+
+function isApiError(value: DashboardAnalysis | { error?: string }): value is { error?: string } {
+  return 'error' in value
 }
