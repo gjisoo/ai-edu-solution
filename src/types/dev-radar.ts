@@ -60,9 +60,24 @@ export interface RepositorySummary {
   topics: string[]
 }
 
+export interface AnalysisEngine {
+  mode: 'heuristic' | 'hybrid-ai'
+  label: string
+  model: string | null
+}
+
+export interface AIInsight {
+  headline: string
+  summary: string
+  strengths: string[]
+  nextStep: string
+}
+
 export interface DashboardAnalysis {
   githubId: string
   repository: RepositorySummary
+  engine: AnalysisEngine
+  aiInsight: AIInsight | null
   collectedAt: string
   dailyLines: number
   cleanCodeScore: number

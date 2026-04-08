@@ -1,5 +1,6 @@
 import 'server-only'
 
+import { generateRepositoryAIEnhancement } from '@/lib/dev-radar/openai-analysis'
 import { parseGitHubRepositoryInput } from '@/lib/github/parse-repo-input'
 import type {
   ActivityEvent,
@@ -141,8 +142,7 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
   const reviewSuggestions = buildReviewSuggestions(repositorySignals)
   const conceptGaps = buildConceptGaps(repositorySignals)
   const activity = buildActivity(repositorySignals)
-
-  return {
+  const heuristicAnalysis: DashboardAnalysis = {
     githubId: parsed.normalizedFullName,
     repository: {
       owner: parsed.owner,
@@ -161,6 +161,12 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
       updatedAt: repository.updated_at,
       topics: repository.topics ?? [],
     },
+    engine: {
+      mode: 'heuristic',
+      label: 'GitHub API + 규칙 기반 분석',
+      model: null,
+    },
+    aiInsight: null,
     collectedAt: formatDateTime(new Date()),
     dailyLines: estimateDailyLines(repository.size, commits.length, repositorySignals.daysSinceLastPush),
     cleanCodeScore: Math.round(
@@ -178,6 +184,64 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
     conceptGaps,
     reviewSuggestions,
     activity,
+  }
+
+  const aiEnhancement = await generateRepositoryAIEnhancement({
+    repository: heuristicAnalysis.repository,
+    metrics,
+    marketFits,
+    reviewSuggestions,
+    conceptGaps,
+    activity,
+    repositorySignals: {
+      frameworks: repositorySignals.frameworks,
+      daysSinceLastPush: repositorySignals.daysSinceLastPush,
+      hasReadme: repositorySignals.hasReadme,
+      hasDocsDir: repositorySignals.hasDocsDir,
+      hasTests: repositorySignals.hasTests,
+      hasCi: repositorySignals.hasCi,
+      hasDocker: repositorySignals.hasDocker,
+      hasTypedLanguage: repositorySignals.hasTypedLanguage,
+      hasSecurityFile: repositorySignals.hasSecurityFile,
+      meaningfulCommitRatio: repositorySignals.meaningfulCommitRatio,
+      uniqueAuthors: repositorySignals.uniqueAuthors,
+    },
+    recentCommits: commits.slice(0, 5).map((commit) => ({
+      sha: commit.sha.slice(0, 7),
+      message: firstLine(commit.commit.message),
+      author: commit.author?.login ?? commit.commit.author?.name ?? null,
+      date: commit.commit.author?.date ?? null,
+    })),
+  })
+
+  if (!aiEnhancement) {
+    return heuristicAnalysis
+  }
+
+  return {
+    ...heuristicAnalysis,
+    engine: {
+      mode: 'hybrid-ai',
+      label: 'GitHub API + OpenAI 분석',
+      model: aiEnhancement.model,
+    },
+    aiInsight: aiEnhancement.aiInsight,
+    focusArea: aiEnhancement.focusArea,
+    reviewSuggestions: aiEnhancement.reviewSuggestions.map((item, index) => ({
+      id: `ai-review-${index + 1}`,
+      title: item.title,
+      impact: item.impact,
+      description: item.description,
+    })),
+    conceptGaps: aiEnhancement.conceptGaps.map((item, index) => ({
+      id: `ai-gap-${index + 1}`,
+      title: item.title,
+      category: item.category,
+      severity: item.severity,
+      timestamp: heuristicAnalysis.collectedAt,
+      summary: item.summary,
+      recommendation: item.recommendation,
+    })),
   }
 }
 
@@ -261,29 +325,26 @@ async function createGitHubError(response: Response) {
 
   if (response.status === 404) {
     return new GitHubAnalysisError(
-      'Repository not found. Check that it is public, or configure GITHUB_TOKEN for private repositories.',
+      '저장소를 찾을 수 없습니다. 공개 저장소인지 확인하거나 비공개 저장소라면 GITHUB_TOKEN을 설정해주세요.',
       404,
     )
   }
 
   if (response.status === 403 && rateLimitRemaining === '0') {
     return new GitHubAnalysisError(
-      'GitHub API rate limit reached. Try again later or configure GITHUB_TOKEN.',
+      'GitHub API 호출 한도에 도달했습니다. 잠시 후 다시 시도하거나 GITHUB_TOKEN을 설정해주세요.',
       429,
     )
   }
 
   if (response.status === 403) {
     return new GitHubAnalysisError(
-      'GitHub API access was denied. Check token permissions and repository visibility.',
+      'GitHub API 접근이 거부되었습니다. 토큰 권한과 저장소 공개 범위를 확인해주세요.',
       403,
     )
   }
 
-  return new GitHubAnalysisError(
-    body ?? 'Failed to load data from the GitHub API.',
-    response.status,
-  )
+  return new GitHubAnalysisError(body ? `GitHub API 오류: ${body}` : 'GitHub API에서 데이터를 불러오지 못했습니다.', response.status)
 }
 
 async function readErrorBody(response: Response) {
@@ -608,27 +669,27 @@ function buildMetrics(signals: ReturnType<typeof buildRepositorySignals>): DevMe
 
 function buildMarketFits(signals: ReturnType<typeof buildRepositorySignals>): MarketFit[] {
   const missingFrontend = collectMissingTech([
-    [!signals.hasTests, 'component or integration tests'],
-    [!signals.hasCi, 'CI checks'],
-    [!signals.hasTypedLanguage, 'strong type safety'],
-    [!signals.hasReadme, 'UI usage docs'],
+    [!signals.hasTests, '컴포넌트 또는 통합 테스트'],
+    [!signals.hasCi, 'CI 검사'],
+    [!signals.hasTypedLanguage, '강한 타입 안정성'],
+    [!signals.hasReadme, 'UI 사용 문서'],
   ])
   const missingBackend = collectMissingTech([
-    [!signals.hasDocker, 'container baseline'],
-    [!signals.hasTests, 'API or integration tests'],
-    [!signals.hasCi, 'release validation'],
-    [!signals.hasLockfile, 'dependency pinning'],
+    [!signals.hasDocker, '컨테이너 실행 기반'],
+    [!signals.hasTests, 'API 또는 통합 테스트'],
+    [!signals.hasCi, '릴리즈 검증'],
+    [!signals.hasLockfile, '의존성 버전 고정'],
   ])
   const missingPlatform = collectMissingTech([
-    [!signals.hasDocker, 'containerization'],
-    [!signals.hasInfra, 'IaC or deployment config'],
-    [!signals.hasCi, 'automation pipeline'],
-    [signals.uniqueAuthors <= 1, 'ops handoff signal'],
+    [!signals.hasDocker, '컨테이너화'],
+    [!signals.hasInfra, 'IaC 또는 배포 설정'],
+    [!signals.hasCi, '자동화 파이프라인'],
+    [signals.uniqueAuthors <= 1, '운영 인수인계 신호'],
   ])
 
   return [
     {
-      targetJob: 'Frontend / Fullstack Engineer',
+      targetJob: '프론트엔드 / 풀스택 엔지니어',
       similarityScore: clamp(
         35 +
           (signals.hasFrontendStack ? 24 : 0) +
@@ -643,7 +704,7 @@ function buildMarketFits(signals: ReturnType<typeof buildRepositorySignals>): Ma
       missingTech: missingFrontend,
     },
     {
-      targetJob: 'Backend Engineer',
+      targetJob: '백엔드 엔지니어',
       similarityScore: clamp(
         34 +
           (signals.hasBackendStack ? 22 : 0) +
@@ -658,7 +719,7 @@ function buildMarketFits(signals: ReturnType<typeof buildRepositorySignals>): Ma
       missingTech: missingBackend,
     },
     {
-      targetJob: 'Platform / DevOps Engineer',
+      targetJob: '플랫폼 / DevOps 엔지니어',
       similarityScore: clamp(
         24 +
           (signals.hasDocker ? 18 : 0) +
@@ -681,74 +742,74 @@ function buildReviewSuggestions(signals: ReturnType<typeof buildRepositorySignal
   if (!signals.hasTests) {
     suggestions.push({
       id: 'review-tests',
-      title: 'Add an automated test baseline',
-      impact: 'Quality + regression safety',
+      title: '자동화 테스트 기본선 추가',
+      impact: '품질 + 회귀 안정성',
       description:
-        'No clear test footprint was detected from the repository root or package manifests. Adding Jest, Vitest, Pytest, or Playwright coverage would make this signal much stronger.',
+        '저장소 루트나 패키지 설정에서 명확한 테스트 흔적이 확인되지 않았습니다. Jest, Vitest, Pytest, Playwright 같은 테스트를 추가하면 신호가 훨씬 강해집니다.',
     })
   }
 
   if (!signals.hasCi) {
     suggestions.push({
       id: 'review-ci',
-      title: 'Wire the repo into CI checks',
-      impact: 'Delivery speed + confidence',
+      title: '저장소를 CI 검사에 연결하기',
+      impact: '전달 속도 + 신뢰도',
       description:
-        'A workflow directory or CI config was not found. Even a lightweight pipeline for lint, typecheck, and tests would improve release trust immediately.',
+        '워크플로 디렉터리나 CI 설정이 보이지 않습니다. lint, typecheck, 테스트만 도는 가벼운 파이프라인이라도 릴리즈 신뢰도를 바로 높여줍니다.',
     })
   }
 
   if (!signals.hasReadme) {
     suggestions.push({
       id: 'review-docs',
-      title: 'Strengthen onboarding documentation',
-      impact: 'Collaboration + handoff',
+      title: '온보딩 문서 강화',
+      impact: '협업 + 인수인계',
       description:
-        'A README or docs entry point was not detected at the repository root. Clear setup, architecture, and run instructions would improve readability and hiring signal.',
+        '저장소 루트에서 README나 문서 진입점을 찾지 못했습니다. 설치 방법, 아키텍처, 실행 방법을 정리하면 가독성과 채용 신호가 함께 좋아집니다.',
     })
   }
 
   if (!signals.hasDocker && signals.hasBackendStack) {
     suggestions.push({
       id: 'review-docker',
-      title: 'Add a deployment-ready runtime baseline',
-      impact: 'Portability + ops readiness',
+      title: '배포 가능한 런타임 기본선 추가',
+      impact: '이식성 + 운영 준비도',
       description:
-        'The repository looks application-oriented, but no Docker or compose config was found. Adding one would make local parity and deployment rehearsal much easier.',
+        '애플리케이션 중심 저장소로 보이지만 Docker나 compose 설정이 없습니다. 이를 추가하면 로컬-배포 환경 일치와 배포 리허설이 훨씬 쉬워집니다.',
     })
   }
 
   if (signals.meaningfulCommitRatio < 0.6) {
     suggestions.push({
       id: 'review-commit-hygiene',
-      title: 'Tighten commit message hygiene',
-      impact: 'Reviewability + narrative',
+      title: '커밋 메시지 위생 개선',
+      impact: '리뷰 용이성 + 서사성',
       description:
-        'Recent commit messages skew short or generic. More descriptive commit titles would make code reviews and portfolio storytelling much stronger.',
+        '최근 커밋 메시지가 짧거나 너무 일반적인 편입니다. 더 설명적인 제목을 쓰면 코드 리뷰와 포트폴리오 스토리 전달력이 함께 좋아집니다.',
     })
   }
 
   const fallbackSuggestions: ReviewSuggestion[] = [
     {
       id: 'review-stack-coverage',
-      title: 'Broaden stack evidence around the current core',
-      impact: 'Market fit + credibility',
+      title: '현재 핵심 스택 주변의 증거 넓히기',
+      impact: '시장 적합도 + 신뢰도',
       description:
-        'The repository already shows a clear technical direction. Adding one more strong signal such as CI, tests, or deployment config would raise the overall profile fast.',
+        '저장소는 이미 분명한 기술 방향을 보여주고 있습니다. 여기에 CI, 테스트, 배포 설정 중 하나만 더해도 전체 프로필을 빠르게 끌어올릴 수 있습니다.',
     },
     {
       id: 'review-release-signal',
-      title: 'Make release expectations explicit',
-      impact: 'Delivery + collaboration',
+      title: '릴리즈 기대치를 명확히 하기',
+      impact: '전달력 + 협업',
       description:
-        'A short contribution guide, release note pattern, or maintenance checklist would make ownership expectations much easier to understand.',
+        '짧은 기여 가이드, 릴리즈 노트 규칙, 유지보수 체크리스트가 있으면 소유권 기대치가 훨씬 선명해집니다.',
     },
     {
       id: 'review-portfolio-story',
-      title: 'Sharpen the portfolio story around the repo',
-      impact: 'Hiring signal + clarity',
+      title: '저장소 중심의 포트폴리오 스토리 선명하게 만들기',
+      impact: '채용 신호 + 명확성',
       description:
-        'Adding a concise architecture note or roadmap section helps reviewers understand why this repository matters and what the next step should be.',
+        '짧은 아키텍처 노트나 로드맵 섹션을 추가하면 왜 이 저장소가 중요한지, 다음 단계가 무엇인지 더 잘 전달할 수 있습니다.',
     },
   ]
 
@@ -769,88 +830,88 @@ function buildConceptGaps(signals: ReturnType<typeof buildRepositorySignals>): C
   if (!signals.hasTests) {
     gaps.push({
       id: 'gap-tests',
-      title: 'Test automation coverage',
-      category: 'quality signal',
+      title: '테스트 자동화 커버리지',
+      category: '품질 신호',
       severity: 'high',
       timestamp: formatDateTime(new Date()),
       summary:
-        'The scan did not find a clear automated test setup. This makes regression risk hard to estimate and weakens the engineering quality signal for reviewers.',
-      recommendation: 'Add a small but visible unit or integration test suite and run it in CI.',
+        '스캔 결과 자동화 테스트 구성이 뚜렷하게 보이지 않습니다. 이 상태에서는 회귀 위험을 가늠하기 어렵고 리뷰어에게 전달되는 품질 신호도 약해집니다.',
+      recommendation: '작더라도 눈에 띄는 단위 테스트나 통합 테스트를 추가하고 CI에서 실행하세요.',
     })
   }
 
   if (!signals.hasCi) {
     gaps.push({
       id: 'gap-ci',
-      title: 'Delivery pipeline visibility',
-      category: 'release workflow',
+      title: '배포 파이프라인 가시성',
+      category: '릴리즈 워크플로',
       severity: 'high',
       timestamp: formatDateTime(new Date(signals.repository.updated_at)),
       summary:
-        'No workflow or CI configuration was detected from the root structure. That leaves linting, test execution, and release validation largely implicit.',
-      recommendation: 'Create a GitHub Actions workflow for lint, build, and test validation.',
+        '루트 구조에서 워크플로나 CI 설정이 보이지 않습니다. 현재는 lint, 테스트 실행, 릴리즈 검증이 대부분 암묵적인 상태로 남아 있습니다.',
+      recommendation: 'lint, build, test 검증용 GitHub Actions 워크플로를 추가하세요.',
     })
   }
 
   if (!signals.hasReadme) {
     gaps.push({
       id: 'gap-docs',
-      title: 'Repository onboarding clarity',
-      category: 'documentation',
+      title: '저장소 온보딩 명확성',
+      category: '문서화',
       severity: 'medium',
       timestamp: formatDateTime(new Date(signals.repository.created_at)),
       summary:
-        'Without a README, setup intent and decision context are hard to reconstruct from the repository alone. This directly lowers readability and collaboration confidence.',
-      recommendation: 'Add a concise README covering purpose, stack, local setup, and key tradeoffs.',
+        'README가 없으면 저장소만 보고 설치 의도와 의사결정 맥락을 재구성하기 어렵습니다. 이는 가독성과 협업 신뢰도를 직접 떨어뜨립니다.',
+      recommendation: '목적, 스택, 로컬 실행 방법, 주요 트레이드오프를 담은 간결한 README를 추가하세요.',
     })
   }
 
   if (!signals.hasDocker && signals.hasBackendStack) {
     gaps.push({
       id: 'gap-runtime',
-      title: 'Deployment portability',
-      category: 'platform readiness',
+      title: '배포 이식성',
+      category: '플랫폼 준비도',
       severity: 'medium',
       timestamp: formatDateTime(new Date(signals.repository.pushed_at)),
       summary:
-        'The repository shows application logic, but no clear runtime packaging or deployment baseline. That leaves production-readiness harder to judge.',
-      recommendation: 'Add a Dockerfile or runtime manifest that documents how the app is executed.',
+        '저장소에는 애플리케이션 로직이 보이지만 실행 패키징이나 배포 기본선이 명확하지 않습니다. 이 때문에 운영 준비도를 판단하기가 어렵습니다.',
+      recommendation: '앱 실행 방식을 설명하는 Dockerfile 또는 런타임 매니페스트를 추가하세요.',
     })
   }
 
   if (signals.daysSinceLastPush > 45) {
     gaps.push({
       id: 'gap-cadence',
-      title: 'Freshness of repository activity',
-      category: 'maintenance cadence',
+      title: '저장소 활동의 최신성',
+      category: '유지보수 주기',
       severity: 'low',
       timestamp: formatDateTime(new Date(signals.repository.pushed_at)),
       summary:
-        'The latest push is relatively old, so current ownership and iteration speed are harder to infer from the public history.',
-      recommendation: 'Refresh the repo with a small maintenance pass, changelog note, or cleanup commit.',
+        '마지막 푸시가 비교적 오래되어 현재의 소유권과 반복 개발 속도를 공개 이력만으로 파악하기 어렵습니다.',
+      recommendation: '작은 유지보수 작업, 변경 로그 메모, 정리용 커밋으로 저장소를 한 번 갱신해보세요.',
     })
   }
 
   const fallbackGaps: ConceptGap[] = [
     {
       id: 'gap-typed-signal',
-      title: 'Typed guardrail coverage',
-      category: 'maintainability',
+      title: '타입 기반 가드레일 범위',
+      category: '유지보수성',
       severity: signals.hasTypedLanguage ? 'low' : 'medium',
       timestamp: formatDateTime(new Date()),
       summary:
-        'Type safety and tooling consistency are part of the portfolio signal. Even a small amount of explicit schema or type coverage makes architecture intent easier to read.',
-      recommendation: 'Add stronger schema or type validation around the most important paths.',
+        '타입 안정성과 도구 일관성은 포트폴리오 신호의 일부입니다. 작은 범위라도 명시적인 스키마나 타입 검증이 있으면 아키텍처 의도를 읽기 쉬워집니다.',
+      recommendation: '가장 중요한 경로부터 스키마 또는 타입 검증을 더 강하게 추가하세요.',
     },
     {
       id: 'gap-collaboration-signal',
-      title: 'Collaboration surface area',
-      category: 'team workflow',
+      title: '협업 신호 노출 범위',
+      category: '팀 워크플로',
       severity: 'low',
       timestamp: formatDateTime(new Date()),
       summary:
-        'The repository can still expose more evidence of handoff quality, review expectations, and contributor onboarding from the root project surface.',
-      recommendation: 'Add a contribution note, ownership guide, or lightweight project board reference.',
+        '현재 저장소는 루트 표면에서 인수인계 품질, 리뷰 기대치, 기여자 온보딩에 대한 증거를 더 보여줄 수 있습니다.',
+      recommendation: '기여 가이드, 소유권 안내, 가벼운 프로젝트 보드 링크 중 하나를 추가해보세요.',
     },
   ]
 
@@ -869,34 +930,34 @@ function buildActivity(signals: ReturnType<typeof buildRepositorySignals>): Acti
   const primaryLanguages =
     signals.mainLanguages.length > 0
       ? signals.mainLanguages.map((language) => `${language.name} ${language.share}%`).join(', ')
-      : 'language data unavailable'
+      : '언어 데이터 없음'
   const stackSummary =
-    signals.stackLabels.length > 0 ? signals.stackLabels.join(', ') : 'framework signal still light'
+    signals.stackLabels.length > 0 ? signals.stackLabels.join(', ') : '프레임워크 신호가 아직 약합니다'
   const healthSummary = [
-    signals.hasTests ? 'tests detected' : 'tests missing',
-    signals.hasCi ? 'CI detected' : 'CI missing',
-    signals.hasDocker ? 'runtime packaging detected' : 'runtime packaging missing',
+    signals.hasTests ? '테스트 감지' : '테스트 없음',
+    signals.hasCi ? 'CI 감지' : 'CI 없음',
+    signals.hasDocker ? '실행 패키징 감지' : '실행 패키징 없음',
   ].join(' | ')
 
   return [
     {
       id: 'activity-scan',
       time: formatClock(new Date()),
-      label: 'Live repository scan completed',
-      detail: `${signals.repository.full_name} was scanned successfully. Primary language mix: ${primaryLanguages}.`,
+      label: '실시간 저장소 스캔 완료',
+      detail: `${signals.repository.full_name} 저장소 분석을 완료했습니다. 주요 언어 비중: ${primaryLanguages}.`,
     },
     {
       id: 'activity-commit',
       time: formatClock(new Date(signals.latestCommit?.commit.author?.date ?? signals.repository.pushed_at)),
-      label: 'Latest commit on the default branch',
+      label: '기본 브랜치 최신 커밋',
       detail: signals.latestCommit
         ? `${signals.latestCommit.sha.slice(0, 7)} | ${firstLine(signals.latestCommit.commit.message)}`
-        : 'No recent commits were returned for the default branch.',
+        : '기본 브랜치에서 최근 커밋을 찾지 못했습니다.',
     },
     {
       id: 'activity-stack',
       time: formatClock(new Date(signals.repository.updated_at)),
-      label: 'Stack and workflow signal',
+      label: '스택 및 워크플로 신호',
       detail: `${stackSummary}. ${healthSummary}.`,
     },
   ]
@@ -907,12 +968,12 @@ function describeWeakestMetric(metrics: DevMetric) {
   const [weakestKey] = entries.reduce((lowest, current) => (current[1] < lowest[1] ? current : lowest))
 
   const copy: Record<keyof DevMetric, string> = {
-    readability: 'Readability and documentation signal need the most attention.',
-    efficiency: 'Execution workflow and delivery speed are the weakest signal right now.',
-    security: 'Security and release guardrails are the lowest-scoring area.',
-    architecture: 'Architecture evidence is thinner than the rest of the repo signal.',
-    consistency: 'Consistency across tooling and workflow is the weakest area.',
-    modernity: 'The stack looks stable, but the modern tooling signal can be stronger.',
+    readability: '가독성과 문서화 신호를 가장 먼저 보완하는 것이 좋습니다.',
+    efficiency: '실행 워크플로와 전달 속도 신호가 가장 약합니다.',
+    security: '보안 및 릴리즈 가드레일이 가장 낮은 영역입니다.',
+    architecture: '저장소 전반에 비해 아키텍처 증거가 부족합니다.',
+    consistency: '도구와 워크플로 전반의 일관성이 가장 약합니다.',
+    modernity: '스택은 안정적이지만 최신 도구 사용 신호는 더 강화할 수 있습니다.',
   }
 
   return copy[weakestKey]
@@ -958,18 +1019,20 @@ function modernStackBonus(frameworks: string[]) {
 }
 
 function formatDateTime(date: Date) {
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'short',
+  return new Intl.DateTimeFormat('ko-KR', {
+    month: 'long',
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+    hour12: false,
   }).format(date)
 }
 
 function formatClock(date: Date) {
-  return new Intl.DateTimeFormat('en-US', {
+  return new Intl.DateTimeFormat('ko-KR', {
     hour: '2-digit',
     minute: '2-digit',
+    hour12: false,
   }).format(date)
 }
 

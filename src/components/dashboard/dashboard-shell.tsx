@@ -41,32 +41,32 @@ const summaryConfig: Array<{
 }> = [
   {
     key: 'cleanCodeScore',
-    label: 'Clean Code Score',
-    unit: 'pts',
+    label: '코드 품질 점수',
+    unit: '점',
     icon: Sparkles,
   },
   {
     key: 'dailyLines',
-    label: 'Est. Daily LoC',
+    label: '추정 일일 LoC',
     unit: 'LoC',
     icon: Activity,
   },
   {
     key: 'marketFitAverage',
-    label: 'Market Fit Avg',
+    label: '시장 적합도 평균',
     unit: '%',
     icon: BriefcaseBusiness,
   },
   {
     key: 'conceptGapCount',
-    label: 'Concept Gaps',
-    unit: 'items',
+    label: '보완 포인트',
+    unit: '건',
     icon: ShieldAlert,
   },
 ] as const
 
 export function DashboardShell() {
-  const [repoInput, setRepoInput] = useState('https://github.com/vercel/next.js')
+  const [repoInput, setRepoInput] = useState('')
   const [submittedRepo, setSubmittedRepo] = useState<string | null>(null)
   const [analysis, setAnalysis] = useState<DashboardAnalysis | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -107,16 +107,16 @@ export function DashboardShell() {
       const payload = (await response.json()) as DashboardAnalysis | { error?: string }
 
       if (isApiError(payload)) {
-        throw new Error(payload.error ?? 'Repository analysis failed.')
+        throw new Error(payload.error ?? '저장소 분석에 실패했습니다.')
       }
 
       if (!response.ok) {
-        throw new Error('Repository analysis failed.')
+        throw new Error('저장소 분석에 실패했습니다.')
       }
 
       setAnalysis(payload)
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Repository analysis failed.')
+      setError(caughtError instanceof Error ? caughtError.message : '저장소 분석에 실패했습니다.')
     } finally {
       setIsLoading(false)
     }
@@ -133,27 +133,27 @@ export function DashboardShell() {
             </div>
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.24em] text-[#ff8ca6]">
-                Live Repository Signal
+                실시간 저장소 시그널
               </p>
               <h1 className="mt-2 font-display text-3xl tracking-tight text-slate-800 sm:text-4xl">
-                Dev-Radar Dashboard
+                Dev-Radar 대시보드
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base">
-                Paste a GitHub repository URL and we will turn real repo metadata, root structure,
-                language mix, and recent commit history into a live engineering signal board.
+                GitHub 저장소 URL을 넣으면 실제 메타데이터, 루트 구조, 언어 비율, 최근 커밋
+                이력을 바탕으로 실시간 엔지니어링 신호판으로 바꿔드립니다.
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-600">
-              GitHub Live Scan
+              GitHub 실시간 스캔
             </span>
             <span className="rounded-full border border-[#d9d4ff] bg-[#f3f0ff] px-3 py-1 text-xs font-semibold text-[#7163ea]">
-              Public Repo Ready
+              공개 저장소 즉시 분석
             </span>
             <span className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-500">
-              Token Optional
+              토큰 선택 사항
             </span>
           </div>
         </header>
@@ -163,23 +163,28 @@ export function DashboardShell() {
             <CardHeader>
               <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.2em] text-[#7d6fff]">
                 <GitBranch className="h-4 w-4" />
-                Analysis Trigger
+                분석 시작
               </div>
               <CardTitle className="font-display text-3xl text-slate-800">
-                Analyze a real GitHub repository
+                실제 GitHub 저장소 분석
               </CardTitle>
               <CardDescription className="max-w-2xl text-sm leading-6 text-slate-600">
-                Supported inputs: full GitHub URL, SSH URL, or <code>owner/repo</code>. Public
-                repositories work immediately, and <code>GITHUB_TOKEN</code> unlocks better rate
-                limits plus private repo access.
+                입력 형식: 전체 GitHub URL, SSH URL, 또는 <code>owner/repo</code>. 공개
+                저장소는 바로 분석되며, <code>GITHUB_TOKEN</code>을 설정하면 더 넉넉한 호출
+                한도와 비공개 저장소 접근을 사용할 수 있습니다.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
               <form onSubmit={handleAnalyze} className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
                 <Input
+                  type="url"
                   value={repoInput}
                   onChange={(event) => setRepoInput(event.target.value)}
                   placeholder="https://github.com/vercel/next.js"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   className="h-12 border-[#eadfdb] bg-white text-base text-slate-800 placeholder:text-slate-400"
                 />
                 <Button
@@ -190,13 +195,18 @@ export function DashboardShell() {
                   {isLoading ? (
                     <span className="inline-flex items-center gap-2">
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      Scanning...
+                      분석 중...
                     </span>
                   ) : (
-                    'Analyze Repo'
+                    '저장소 분석'
                   )}
                 </Button>
               </form>
+
+              <p className="text-xs leading-5 text-slate-500">
+                예시: <code>https://github.com/junsuk1226/final</code> 또는{' '}
+                <code>junsuk1226/final</code>
+              </p>
 
               {error ? (
                 <div className="rounded-[24px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600">
@@ -209,20 +219,18 @@ export function DashboardShell() {
 
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
-                  <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Accepted Input</p>
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate-400">지원 입력</p>
                   <p className="mt-2 text-lg font-semibold text-slate-800">URL / owner/repo</p>
                 </div>
                 <div className="rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
-                  <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Analysis Mode</p>
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate-400">분석 모드</p>
                   <p className="mt-2 text-lg font-semibold text-slate-800">
-                    GitHub API + heuristics
+                    {analysis?.engine.label ?? 'GitHub API + 규칙 기반 분석'}
                   </p>
                 </div>
                 <div className="rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
-                  <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Primary Output</p>
-                  <p className="mt-2 text-lg font-semibold text-slate-800">
-                    Repo health + market fit
-                  </p>
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate-400">주요 결과</p>
+                  <p className="mt-2 text-lg font-semibold text-slate-800">저장소 상태 + AI 인사이트</p>
                 </div>
               </div>
             </CardContent>
@@ -232,37 +240,49 @@ export function DashboardShell() {
             <CardHeader>
               <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.2em] text-[#59b8a0]">
                 <Radar className="h-4 w-4" />
-                System Status
+                시스템 상태
               </div>
               <CardTitle className="font-display text-3xl text-slate-800">
-                Live scan status and current focus
+                실시간 스캔 상태와 현재 포커스
               </CardTitle>
               <CardDescription className="text-sm leading-6 text-slate-600">
-                This MVP is now grounded in live GitHub repository data. Narrative insights are
-                still heuristic-based, which keeps the flow fast while we prepare the AI layer.
+                GitHub 저장소 데이터는 항상 실시간으로 가져옵니다.{' '}
+                <code>OPENAI_API_KEY</code>가 설정되면 원시 저장소 신호 위에 AI 해석
+                레이어도 함께 추가됩니다.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 text-sm text-slate-600">
               <div className="rounded-[24px] border border-emerald-200 bg-emerald-50/80 p-4">
-                <p className="text-xs uppercase tracking-[0.18em] text-emerald-500">Current Focus</p>
+                <p className="text-xs uppercase tracking-[0.18em] text-emerald-500">현재 포커스</p>
                 <p className="mt-2 text-lg font-semibold text-slate-800">
-                  {analysis?.focusArea ?? 'Paste a repository to generate the first live signal.'}
+                  {analysis?.focusArea ?? '저장소를 입력하면 첫 실시간 신호를 생성합니다.'}
                 </p>
               </div>
               <div className="rounded-[24px] border border-[#d9d4ff] bg-[#f4efff] p-4">
-                <p className="text-xs uppercase tracking-[0.18em] text-[#7d6fff]">Last Updated</p>
+                <p className="text-xs uppercase tracking-[0.18em] text-[#7d6fff]">마지막 업데이트</p>
                 <p className="mt-2 text-lg font-semibold text-slate-800">
-                  {analysis?.collectedAt ?? 'Waiting for first scan'}
+                  {analysis?.collectedAt ?? '첫 스캔 대기 중'}
                 </p>
               </div>
               <div className="rounded-[24px] border border-[#eadfdb] bg-white/85 p-4">
-                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Latest Repository</p>
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">분석 엔진</p>
                 <p className="mt-2 text-lg font-semibold text-slate-800">
-                  {analysis?.repository.fullName ?? submittedRepo ?? 'No repository analyzed yet'}
+                  {analysis?.engine.label ?? 'GitHub API + 규칙 기반 분석'}
+                </p>
+                <p className="mt-2 leading-6 text-slate-600">
+                  {analysis?.engine.model
+                    ? `AI 모델: ${analysis.engine.model}`
+                    : 'OPENAI_API_KEY가 있으면 AI 보강이 자동으로 활성화됩니다.'}
+                </p>
+              </div>
+              <div className="rounded-[24px] border border-[#eadfdb] bg-white/85 p-4">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">최근 분석 저장소</p>
+                <p className="mt-2 text-lg font-semibold text-slate-800">
+                  {analysis?.repository.fullName ?? submittedRepo ?? '아직 분석한 저장소가 없습니다'}
                 </p>
                 <p className="mt-2 leading-6 text-slate-600">
                   {analysis?.repository.description ??
-                    'The next scan will pull repository metadata, language stats, and recent commit activity from GitHub.'}
+                    '다음 스캔에서는 GitHub에서 저장소 메타데이터, 언어 통계, 최근 커밋 활동을 가져옵니다.'}
                 </p>
               </div>
             </CardContent>
@@ -308,14 +328,14 @@ export function DashboardShell() {
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#7d6fff]">
-                        Live Hexagon Metric
+                        실시간 핵심 지표
                       </p>
                       <CardTitle className="mt-2 text-2xl text-slate-800">
-                        Repository quality signal by category
+                        카테고리별 저장소 품질 신호
                       </CardTitle>
                     </div>
                     <span className="rounded-full border border-[#d9d4ff] bg-[#f4efff] px-3 py-1 text-xs font-semibold text-[#7d6fff]">
-                      live update
+                      실시간 업데이트
                     </span>
                   </div>
                 </CardHeader>
@@ -327,12 +347,55 @@ export function DashboardShell() {
               <div className="grid gap-6">
                 <Card className="border-white/70 bg-white/80 shadow-[0_24px_56px_rgba(235,193,166,0.16)]">
                   <CardHeader>
-                    <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.2em] text-[#c66ab4]">
-                      <Bot className="h-4 w-4" />
-                      Review Suggestions
+                    <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.2em] text-[#7d6fff]">
+                      <Sparkles className="h-4 w-4" />
+                      AI 해석
                     </div>
                     <CardTitle className="text-2xl text-slate-800">
-                      Highest-leverage improvements for this repo
+                      {analysis.aiInsight?.headline ?? 'AI 보강을 활성화할 준비가 되었습니다'}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4 text-sm text-slate-600">
+                    <p className="leading-6">
+                      {analysis.aiInsight?.summary ??
+                        'OPENAI_API_KEY를 추가한 뒤 다시 분석하면 실제 저장소 데이터를 기반으로 한 AI 요약, 포커스 재해석, AI 제안이 생성됩니다.'}
+                    </p>
+                    {analysis.aiInsight ? (
+                      <>
+                        <div className="flex flex-wrap gap-2">
+                          {analysis.aiInsight.strengths.map((strength) => (
+                            <span
+                              key={strength}
+                              className="rounded-full border border-[#d9d4ff] bg-[#f4efff] px-3 py-1 text-xs font-semibold text-[#7163ea]"
+                            >
+                              {strength}
+                            </span>
+                          ))}
+                        </div>
+                        <div className="rounded-[20px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
+                          <p className="text-xs uppercase tracking-[0.18em] text-slate-400">추천 다음 단계</p>
+                          <p className="mt-2 leading-6 text-slate-700">{analysis.aiInsight.nextStep}</p>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="rounded-[20px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
+                        <p className="text-xs uppercase tracking-[0.18em] text-slate-400">현재 동작</p>
+                        <p className="mt-2 leading-6 text-slate-700">
+                          현재 대시보드는 실시간 GitHub 데이터와 규칙 기반 해석만 표시하고 있습니다.
+                        </p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card className="border-white/70 bg-white/80 shadow-[0_24px_56px_rgba(235,193,166,0.16)]">
+                  <CardHeader>
+                    <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.2em] text-[#c66ab4]">
+                      <Bot className="h-4 w-4" />
+                      {analysis.aiInsight ? 'AI 검토 제안' : '검토 제안'}
+                    </div>
+                    <CardTitle className="text-2xl text-slate-800">
+                      이 저장소에 가장 효과적인 개선 포인트
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3">
@@ -357,10 +420,10 @@ export function DashboardShell() {
                   <CardHeader>
                     <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.2em] text-[#59b8a0]">
                       <Activity className="h-4 w-4" />
-                      Live Activity Feed
+                      실시간 활동 피드
                     </div>
                     <CardTitle className="text-2xl text-slate-800">
-                      What we actually detected from GitHub
+                      GitHub에서 실제로 감지한 내용
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
@@ -382,19 +445,19 @@ export function DashboardShell() {
 
             <section className="grid gap-6 2xl:grid-cols-[1.05fr_0.95fr]">
               <Card className="border-white/70 bg-white/80 shadow-[0_24px_56px_rgba(235,193,166,0.16)]">
-                <CardHeader>
-                  <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.2em] text-[#5eb8bf]">
-                    <BriefcaseBusiness className="h-4 w-4" />
-                    Market-Fit Index
-                  </div>
-                  <CardTitle className="text-2xl text-slate-800">
-                    Which engineering tracks this repo supports best
-                  </CardTitle>
-                  <CardDescription className="text-slate-600">
-                    These scores are inferred from repo structure, stack signals, workflow files,
-                    and recent activity rather than AI-generated career advice.
-                  </CardDescription>
-                </CardHeader>
+                  <CardHeader>
+                    <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.2em] text-[#5eb8bf]">
+                      <BriefcaseBusiness className="h-4 w-4" />
+                      시장 적합도 지표
+                    </div>
+                    <CardTitle className="text-2xl text-slate-800">
+                      이 저장소가 가장 잘 뒷받침하는 엔지니어링 포지션
+                    </CardTitle>
+                    <CardDescription className="text-slate-600">
+                      이 점수는 AI가 임의로 추천한 진로가 아니라 저장소 구조, 스택 신호,
+                      워크플로 파일, 최근 활동을 바탕으로 추정합니다.
+                    </CardDescription>
+                  </CardHeader>
                 <CardContent className="space-y-4">
                   {analysis.marketFits.map((job) => (
                     <article
@@ -405,7 +468,7 @@ export function DashboardShell() {
                         <div>
                           <strong className="text-slate-800">{job.targetJob}</strong>
                           <p className="mt-2 text-sm text-slate-600">
-                            Missing signal: {job.missingTech.join(', ')}
+                            부족한 신호: {job.missingTech.join(', ')}
                           </p>
                         </div>
                         <span className="rounded-full bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-600">
@@ -427,10 +490,10 @@ export function DashboardShell() {
                   <CardHeader>
                     <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.2em] text-[#e39d4f]">
                       <ShieldAlert className="h-4 w-4" />
-                      Gap Tracker
+                      보완 포인트
                     </div>
                     <CardTitle className="text-2xl text-slate-800">
-                      Concrete gaps surfaced by the live scan
+                      실시간 스캔으로 드러난 구체적 보완점
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
@@ -447,7 +510,7 @@ export function DashboardShell() {
                             gap.severity === 'low' && 'border-emerald-200 text-emerald-500',
                           )}
                         >
-                          {gap.severity}
+                          {formatSeverity(gap.severity)}
                         </span>
                         <div className="rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
                           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -461,7 +524,7 @@ export function DashboardShell() {
                           </p>
                           <p className="mt-3 text-sm leading-6 text-slate-600">{gap.summary}</p>
                           <p className="mt-3 rounded-2xl bg-[#fff4ea] px-3 py-2 text-sm text-slate-600">
-                            Recommendation: {gap.recommendation}
+                            권장 조치: {gap.recommendation}
                           </p>
                         </div>
                       </article>
@@ -473,17 +536,17 @@ export function DashboardShell() {
                   <CardHeader>
                     <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.2em] text-[#7d6fff]">
                       <Sparkles className="h-4 w-4" />
-                      Repository Snapshot
+                      저장소 스냅샷
                     </div>
                     <CardTitle className="text-2xl text-slate-800">
-                      Real repository metadata at a glance
+                      실제 저장소 메타데이터 한눈에 보기
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4 text-sm text-slate-600">
                     <div className="rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
-                          <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Repository</p>
+                          <p className="text-xs uppercase tracking-[0.18em] text-slate-400">저장소</p>
                           <p className="mt-2 text-lg font-semibold text-slate-800">
                             {analysis.repository.fullName}
                           </p>
@@ -494,52 +557,52 @@ export function DashboardShell() {
                           rel="noreferrer"
                           className="inline-flex items-center gap-1 rounded-full border border-[#eadfdb] bg-white px-3 py-1 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-50"
                         >
-                          Open on GitHub
+                          GitHub에서 열기
                           <ExternalLink className="h-3.5 w-3.5" />
                         </a>
                       </div>
                       <p className="mt-3 leading-6 text-slate-600">
-                        {analysis.repository.description ?? 'No repository description was provided on GitHub.'}
+                        {analysis.repository.description ?? 'GitHub에 저장소 설명이 없습니다.'}
                       </p>
                     </div>
 
                     <div className="grid gap-3 sm:grid-cols-3">
                       <div className="rounded-[20px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
-                        <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Branch</p>
+                        <p className="text-xs uppercase tracking-[0.18em] text-slate-400">브랜치</p>
                         <p className="mt-2 font-semibold text-slate-800">
                           {analysis.repository.defaultBranch}
                         </p>
                       </div>
                       <div className="rounded-[20px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
-                        <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Visibility</p>
-                        <p className="mt-2 font-semibold capitalize text-slate-800">
-                          {analysis.repository.visibility}
+                        <p className="text-xs uppercase tracking-[0.18em] text-slate-400">공개 범위</p>
+                        <p className="mt-2 font-semibold text-slate-800">
+                          {formatVisibility(analysis.repository.visibility)}
                         </p>
                       </div>
                       <div className="rounded-[20px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
-                        <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Primary Language</p>
+                        <p className="text-xs uppercase tracking-[0.18em] text-slate-400">주 언어</p>
                         <p className="mt-2 font-semibold text-slate-800">
-                          {analysis.repository.primaryLanguage ?? 'Unknown'}
+                          {analysis.repository.primaryLanguage ?? '알 수 없음'}
                         </p>
                       </div>
                     </div>
 
                     <div className="grid gap-3 sm:grid-cols-3">
                       <div className="rounded-[20px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
-                        <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Stars</p>
+                        <p className="text-xs uppercase tracking-[0.18em] text-slate-400">스타</p>
                         <p className="mt-2 flex items-center gap-2 font-semibold text-slate-800">
                           <Star className="h-4 w-4 text-amber-400" />
                           {formatNumber(analysis.repository.stars)}
                         </p>
                       </div>
                       <div className="rounded-[20px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
-                        <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Forks</p>
+                        <p className="text-xs uppercase tracking-[0.18em] text-slate-400">포크</p>
                         <p className="mt-2 font-semibold text-slate-800">
                           {formatNumber(analysis.repository.forks)}
                         </p>
                       </div>
                       <div className="rounded-[20px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
-                        <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Open Issues</p>
+                        <p className="text-xs uppercase tracking-[0.18em] text-slate-400">열린 이슈</p>
                         <p className="mt-2 font-semibold text-slate-800">
                           {formatNumber(analysis.repository.openIssues)}
                         </p>
@@ -547,7 +610,7 @@ export function DashboardShell() {
                     </div>
 
                     <div className="rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
-                      <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Top Languages</p>
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate-400">주요 언어</p>
                       <div className="mt-3 flex flex-wrap gap-2">
                         {analysis.repository.mainLanguages.map((language) => (
                           <span
@@ -569,16 +632,16 @@ export function DashboardShell() {
             <CardContent className="p-8">
               <div className="max-w-3xl space-y-4">
                 <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#7d6fff]">
-                  First Live Scan
+                  첫 실시간 스캔
                 </p>
                 <h2 className="font-display text-3xl text-slate-800">
-                  The dashboard is ready for a real repository
+                  이제 실제 저장소를 분석할 준비가 되었습니다
                 </h2>
                 <p className="text-sm leading-7 text-slate-600 sm:text-base">
-                  Start with a public repo such as <code>vercel/next.js</code> or your own
-                  repository URL. The current pipeline analyzes live GitHub metadata, root files,
-                  language share, and recent commits. AI-generated narrative explanations can be
-                  layered in next.
+                  <code>vercel/next.js</code> 같은 공개 저장소나 직접 만든 저장소 URL로
+                  시작해보세요. 현재 파이프라인은 GitHub 메타데이터, 루트 파일, 언어 비중,
+                  최근 커밋을 실시간으로 분석합니다. <code>OPENAI_API_KEY</code>를
+                  추가하면 그 위에 AI 해석 레이어까지 활성화됩니다.
                 </p>
               </div>
             </CardContent>
@@ -590,10 +653,34 @@ export function DashboardShell() {
 }
 
 function formatNumber(value: number) {
-  return new Intl.NumberFormat('en-US', {
+  return new Intl.NumberFormat('ko-KR', {
     notation: value >= 1000 ? 'compact' : 'standard',
     maximumFractionDigits: 1,
   }).format(value)
+}
+
+function formatVisibility(value: string) {
+  if (value === 'public') {
+    return '공개'
+  }
+
+  if (value === 'private') {
+    return '비공개'
+  }
+
+  return value
+}
+
+function formatSeverity(value: DashboardAnalysis['conceptGaps'][number]['severity']) {
+  if (value === 'high') {
+    return '높음'
+  }
+
+  if (value === 'medium') {
+    return '중간'
+  }
+
+  return '낮음'
 }
 
 function isApiError(value: DashboardAnalysis | { error?: string }): value is { error?: string } {

@@ -12,11 +12,11 @@ export function parseGitHubRepositoryInput(input: string): ParsedGitHubRepositor
   const trimmed = input.trim()
 
   if (!trimmed) {
-    throw new Error('Enter a GitHub repository URL first.')
+    throw new Error('GitHub 저장소 URL을 먼저 입력해주세요.')
   }
 
   if (trimmed.startsWith('@') && !trimmed.includes('/')) {
-    throw new Error('Enter a repository path like owner/repo, not just a user handle.')
+    throw new Error('사용자 핸들만이 아니라 owner/repo 형식의 저장소 경로를 입력해주세요.')
   }
 
   if (trimmed.startsWith(SSH_PREFIX)) {
@@ -32,11 +32,11 @@ export function parseGitHubRepositoryInput(input: string): ParsedGitHubRepositor
   try {
     url = new URL(trimmed)
   } catch {
-    throw new Error('Use a GitHub repository URL or an owner/repo path.')
+    throw new Error('GitHub 저장소 URL 또는 owner/repo 형식으로 입력해주세요.')
   }
 
   if (!GITHUB_HOSTS.has(url.hostname.toLowerCase())) {
-    throw new Error('Only github.com repositories can be analyzed right now.')
+    throw new Error('현재는 github.com 저장소만 분석할 수 있습니다.')
   }
 
   return parseRepositoryPath(url.pathname)
@@ -49,7 +49,7 @@ function parseRepositoryPath(pathValue: string): ParsedGitHubRepositoryInput {
   const repo = decodeURIComponent(repoSegment ?? '')
 
   if (!owner || !repo) {
-    throw new Error('Repository path not found. Example: vercel/next.js')
+    throw new Error('저장소 경로를 찾지 못했습니다. 예: vercel/next.js')
   }
 
   const normalizedFullName = `${owner}/${repo}`
