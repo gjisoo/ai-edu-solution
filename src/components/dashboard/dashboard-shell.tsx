@@ -247,7 +247,7 @@ export function DashboardShell() {
               </CardTitle>
               <CardDescription className="text-sm leading-6 text-slate-600">
                 GitHub 저장소 데이터는 항상 실시간으로 가져옵니다.{' '}
-                <code>OPENAI_API_KEY</code>가 설정되면 원시 저장소 신호 위에 AI 해석
+                <code>GEMINI_API_KEY</code>가 설정되면 원시 저장소 신호 위에 AI 해석
                 레이어도 함께 추가됩니다.
               </CardDescription>
             </CardHeader>
@@ -272,7 +272,7 @@ export function DashboardShell() {
                 <p className="mt-2 leading-6 text-slate-600">
                   {analysis?.engine.model
                     ? `AI 모델: ${analysis.engine.model}`
-                    : 'OPENAI_API_KEY가 있으면 AI 보강이 자동으로 활성화됩니다.'}
+                    : 'GEMINI_API_KEY가 있으면 AI 보강이 자동으로 활성화됩니다.'}
                 </p>
               </div>
               <div className="rounded-[24px] border border-[#eadfdb] bg-white/85 p-4">
@@ -358,7 +358,7 @@ export function DashboardShell() {
                   <CardContent className="space-y-4 text-sm text-slate-600">
                     <p className="leading-6">
                       {analysis.aiInsight?.summary ??
-                        'OPENAI_API_KEY를 추가한 뒤 다시 분석하면 실제 저장소 데이터를 기반으로 한 AI 요약, 포커스 재해석, AI 제안이 생성됩니다.'}
+                        'GEMINI_API_KEY를 추가한 뒤 다시 분석하면 실제 저장소 데이터를 기반으로 한 AI 요약, 포커스 재해석, AI 제안이 생성됩니다.'}
                     </p>
                     {analysis.aiInsight ? (
                       <>
@@ -640,7 +640,7 @@ export function DashboardShell() {
                 <p className="text-sm leading-7 text-slate-600 sm:text-base">
                   <code>vercel/next.js</code> 같은 공개 저장소나 직접 만든 저장소 URL로
                   시작해보세요. 현재 파이프라인은 GitHub 메타데이터, 루트 파일, 언어 비중,
-                  최근 커밋을 실시간으로 분석합니다. <code>OPENAI_API_KEY</code>를
+                  최근 커밋을 실시간으로 분석합니다. <code>GEMINI_API_KEY</code>를
                   추가하면 그 위에 AI 해석 레이어까지 활성화됩니다.
                 </p>
               </div>

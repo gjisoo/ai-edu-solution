@@ -1,6 +1,6 @@
 import 'server-only'
 
-import { generateRepositoryAIEnhancement } from '@/lib/dev-radar/openai-analysis'
+import { generateRepositoryAIEnhancement } from '@/lib/dev-radar/gemini-analysis'
 import { parseGitHubRepositoryInput } from '@/lib/github/parse-repo-input'
 import type {
   ActivityEvent,
@@ -222,7 +222,7 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
     ...heuristicAnalysis,
     engine: {
       mode: 'hybrid-ai',
-      label: 'GitHub API + OpenAI 분석',
+      label: 'GitHub API + Gemini 분석',
       model: aiEnhancement.model,
     },
     aiInsight: aiEnhancement.aiInsight,

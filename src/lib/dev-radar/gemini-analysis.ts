@@ -1,7 +1,5 @@
 import 'server-only'
 
-import OpenAI from 'openai'
-
 import type {
   ActivityEvent,
   AIInsight,
@@ -11,8 +9,6 @@ import type {
   RepositorySummary,
   ReviewSuggestion,
 } from '@/types/dev-radar'
-
-type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
 
 export interface RepositoryAIEnhancement {
   model: string
@@ -50,8 +46,33 @@ type RepositoryAIInput = {
   }>
 }
 
-const OPENAI_DEFAULT_MODEL = 'gpt-5.4-mini'
-const OPENAI_DEFAULT_REASONING: ReasoningEffort = 'low'
+type GeminiGenerateContentResponse = {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{
+        text?: string
+      }>
+    }
+    finishReason?: string
+  }>
+  promptFeedback?: {
+    blockReason?: string
+  }
+}
+
+type GeminiErrorResponse = {
+  error?: {
+    code?: number
+    message?: string
+    status?: string
+  }
+}
+
+const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta'
+const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash'
+const GEMINI_RETRYABLE_STATUS_CODES = new Set([429, 500, 503])
+const GEMINI_MAX_ATTEMPTS = 3
+const GEMINI_MAX_GENERATION_ATTEMPTS = 2
 const AI_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -59,8 +80,7 @@ const AI_SCHEMA = {
   properties: {
     focusArea: {
       type: 'string',
-      minLength: 12,
-      maxLength: 140,
+      description: 'The main Korean focus area for this repository analysis.',
     },
     aiInsight: {
       type: 'object',
@@ -69,13 +89,11 @@ const AI_SCHEMA = {
       properties: {
         headline: {
           type: 'string',
-          minLength: 8,
-          maxLength: 90,
+          description: 'A concise Korean headline.',
         },
         summary: {
           type: 'string',
-          minLength: 40,
-          maxLength: 320,
+          description: 'A short Korean summary grounded only in evidence.',
         },
         strengths: {
           type: 'array',
@@ -83,14 +101,12 @@ const AI_SCHEMA = {
           maxItems: 3,
           items: {
             type: 'string',
-            minLength: 8,
-            maxLength: 80,
+            description: 'A short Korean strength statement.',
           },
         },
         nextStep: {
           type: 'string',
-          minLength: 18,
-          maxLength: 160,
+          description: 'A concrete Korean next step.',
         },
       },
     },
@@ -105,18 +121,15 @@ const AI_SCHEMA = {
         properties: {
           title: {
             type: 'string',
-            minLength: 8,
-            maxLength: 80,
+            description: 'A Korean title for the review suggestion.',
           },
           impact: {
             type: 'string',
-            minLength: 8,
-            maxLength: 50,
+            description: 'A short Korean impact label.',
           },
           description: {
             type: 'string',
-            minLength: 30,
-            maxLength: 240,
+            description: 'A concise Korean explanation.',
           },
         },
       },
@@ -132,13 +145,11 @@ const AI_SCHEMA = {
         properties: {
           title: {
             type: 'string',
-            minLength: 8,
-            maxLength: 80,
+            description: 'A Korean title for the detected concept gap.',
           },
           category: {
             type: 'string',
-            minLength: 6,
-            maxLength: 40,
+            description: 'A Korean category label.',
           },
           severity: {
             type: 'string',
@@ -146,13 +157,11 @@ const AI_SCHEMA = {
           },
           summary: {
             type: 'string',
-            minLength: 30,
-            maxLength: 220,
+            description: 'A concise Korean evidence-backed summary.',
           },
           recommendation: {
             type: 'string',
-            minLength: 18,
-            maxLength: 180,
+            description: 'A Korean recommendation for closing the gap.',
           },
         },
       },
@@ -163,52 +172,146 @@ const AI_SCHEMA = {
 export async function generateRepositoryAIEnhancement(
   input: RepositoryAIInput,
 ): Promise<RepositoryAIEnhancement | null> {
-  const apiKey = process.env.OPENAI_API_KEY
+  const apiKey = process.env.GEMINI_API_KEY?.trim()
 
   if (!apiKey) {
     return null
   }
 
-  const model = process.env.OPENAI_MODEL?.trim() || OPENAI_DEFAULT_MODEL
-  const reasoningEffort = parseReasoningEffort(process.env.OPENAI_REASONING_EFFORT)
-  const client = new OpenAI({ apiKey })
+  const model = process.env.GEMINI_MODEL?.trim() || GEMINI_DEFAULT_MODEL
 
   try {
-    const response = await client.responses.create({
-      model,
-      reasoning: {
-        effort: reasoningEffort,
-      },
-      instructions: [
-        'You are Dev-Radar, an engineering portfolio analyst.',
-        'Base every claim strictly on the repository evidence provided by the user input.',
-        'Do not invent files, practices, tests, or deployment setup that are not supported by the evidence.',
-        'Keep every field concise, concrete, and suitable for direct dashboard display.',
-        'When evidence is limited, acknowledge that the signal is thin instead of overstating confidence.',
-        'Write every output string in natural Korean.',
-        'Return valid JSON matching the schema.',
-      ].join(' '),
-      input: JSON.stringify(buildPromptPayload(input), null, 2),
-      text: {
-        verbosity: 'low',
-        format: {
-          type: 'json_schema',
-          name: 'dev_radar_ai_enhancement',
-          strict: true,
-          schema: AI_SCHEMA,
-        },
-      },
-    })
+    const prompt = buildGeminiPrompt(input)
 
-    if (!response.output_text) {
-      return null
+    for (let attempt = 1; attempt <= GEMINI_MAX_GENERATION_ATTEMPTS; attempt += 1) {
+      const response = await requestGeminiWithRetry({
+        apiKey,
+        model,
+        prompt,
+      })
+
+      if (!response.ok) {
+        throw new Error(await readGeminiError(response))
+      }
+
+      const payload = (await response.json()) as GeminiGenerateContentResponse
+      const outputText = extractGeminiText(payload)
+
+      if (!outputText) {
+        if (attempt < GEMINI_MAX_GENERATION_ATTEMPTS) {
+          await sleep(attempt * 1000)
+          continue
+        }
+
+        return null
+      }
+
+      const parsed = parseAIEnhancement(outputText, model)
+
+      if (parsed) {
+        return parsed
+      }
+
+      if (attempt < GEMINI_MAX_GENERATION_ATTEMPTS) {
+        await sleep(attempt * 1000)
+      }
     }
 
-    return parseAIEnhancement(response.output_text, model)
+    return null
   } catch (error) {
-    console.error('[dev-radar] OpenAI enhancement failed', error)
+    console.error('[dev-radar] Gemini enhancement failed', error)
     return null
   }
+}
+
+async function requestGeminiWithRetry(input: {
+  apiKey: string
+  model: string
+  prompt: string
+}) {
+  let lastResponse: Response | null = null
+
+  for (let attempt = 1; attempt <= GEMINI_MAX_ATTEMPTS; attempt += 1) {
+    const response = await fetch(`${GEMINI_API_BASE}/models/${encodeURIComponent(input.model)}:generateContent`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-goog-api-key': input.apiKey,
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                text: input.prompt,
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseJsonSchema: AI_SCHEMA,
+          temperature: 0.2,
+        },
+      }),
+    })
+
+    if (response.ok || !GEMINI_RETRYABLE_STATUS_CODES.has(response.status) || attempt === GEMINI_MAX_ATTEMPTS) {
+      return response
+    }
+
+    lastResponse = response
+    await sleep(attempt * 1200)
+  }
+
+  return lastResponse ?? new Response(null, { status: 503, statusText: 'Gemini retry exhausted' })
+}
+
+async function readGeminiError(response: Response) {
+  try {
+    const body = (await response.json()) as GeminiErrorResponse
+
+    if (body.error?.message) {
+      return body.error.message
+    }
+  } catch {
+    // Ignore JSON parse failures and fall back to the HTTP status text.
+  }
+
+  return `Gemini request failed with ${response.status} ${response.statusText}`
+}
+
+function extractGeminiText(payload: GeminiGenerateContentResponse) {
+  const parts = payload.candidates?.[0]?.content?.parts
+
+  if (!parts?.length) {
+    if (payload.promptFeedback?.blockReason) {
+      console.warn('[dev-radar] Gemini prompt blocked', payload.promptFeedback.blockReason)
+    }
+
+    return null
+  }
+
+  return parts
+    .map((part) => part.text ?? '')
+    .join('')
+    .trim()
+}
+
+function buildGeminiPrompt(input: RepositoryAIInput) {
+  return [
+    'You are Dev-Radar, an engineering portfolio analyst.',
+    'Base every claim strictly on the repository evidence provided in the JSON payload.',
+    'Do not invent files, practices, tests, deployment setup, or team process that are not supported by evidence.',
+    'Keep every field concise, concrete, and suitable for direct dashboard display.',
+    'When evidence is limited, acknowledge thin signal instead of overstating confidence.',
+    'Write every output string in natural Korean.',
+    'Return only valid JSON that matches the provided schema.',
+    '',
+    'Repository evidence JSON:',
+    JSON.stringify(buildPromptPayload(input), null, 2),
+  ].join('\n')
 }
 
 function buildPromptPayload(input: RepositoryAIInput) {
@@ -372,17 +475,6 @@ function isSeverity(value: unknown): value is ConceptGap['severity'] {
   return value === 'high' || value === 'medium' || value === 'low'
 }
 
-function parseReasoningEffort(value: string | undefined): ReasoningEffort {
-  if (
-    value === 'none' ||
-    value === 'minimal' ||
-    value === 'low' ||
-    value === 'medium' ||
-    value === 'high' ||
-    value === 'xhigh'
-  ) {
-    return value
-  }
-
-  return OPENAI_DEFAULT_REASONING
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
