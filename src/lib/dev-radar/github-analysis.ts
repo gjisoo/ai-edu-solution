@@ -1,5 +1,8 @@
 import 'server-only'
 
+import zlib from 'zlib'
+import tar from 'tar-stream'
+
 import { generateRepositoryAIEnhancement } from '@/lib/dev-radar/gemini-analysis'
 import { parseGitHubRepositoryInput } from '@/lib/github/parse-repo-input'
 import type {
@@ -89,15 +92,11 @@ const CODE_FILE_LANGUAGES: Record<string, string> = {
   '.rb': 'Ruby',
   '.php': 'PHP',
 }
-const MAX_CODE_SAMPLE_DEPTH = 3
-const MAX_CODE_SAMPLE_FILES = 8
-const MAX_CODE_SAMPLE_CANDIDATES = 24
-const MAX_DIRECTORY_FANOUT = 8
-const MAX_ROOT_DIRECTORIES = 10
-const MAX_CODE_SAMPLE_LINES = 90
-const MAX_CODE_SAMPLE_CHARS = 2600
+const MAX_CODE_SAMPLE_LINES = 500
+const MAX_CODE_SAMPLE_CHARS = 20000
 const MAX_WORKFLOW_FILES = 8
 const WORKFLOW_FILE_PATTERN = /\.(ya?ml)$/i
+const MAX_TOTAL_CHARS = 300000
 
 type GitHubRepositoryResponse = {
   name: string
@@ -134,25 +133,8 @@ type GitHubCommitResponse = {
   } | null
 }
 
-type GitHubContentItem = {
-  name: string
-  path: string
-  type: 'file' | 'dir'
-}
 
-type GitHubFileResponse = {
-  type: 'file'
-  content?: string
-  encoding?: string
-}
 
-type GitHubTreeResponse = {
-  truncated?: boolean
-  tree?: Array<{
-    path: string
-    type: 'blob' | 'tree'
-  }>
-}
 
 type PackageManifest = {
   dependencies?: Record<string, string>
@@ -200,22 +182,13 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
   const repositoryPath = `/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}`
   const repository = await fetchGitHubJson<GitHubRepositoryResponse>(repositoryPath)
 
-  const [languages, commits, rootContentsRaw] = await Promise.all([
+  const [languages, commits, { rootFileContents, workflowSignals, codeSamples, rootContents }] = await Promise.all([
     fetchGitHubJson<Record<string, number>>(`${repositoryPath}/languages`),
     fetchGitHubJson<GitHubCommitResponse[]>(
       `${repositoryPath}/commits?per_page=${MAX_COMMITS}&sha=${encodeURIComponent(repository.default_branch)}`,
       { fallbackValue: [] },
     ),
-    fetchGitHubJson<GitHubContentItem[] | GitHubContentItem>(`${repositoryPath}/contents`, {
-      fallbackValue: [],
-    }),
-  ])
-
-  const rootContents = Array.isArray(rootContentsRaw) ? rootContentsRaw : []
-  const [rootFileContents, codeSamples, workflowSignals] = await Promise.all([
-    loadRootFileContents(repositoryPath, rootContents),
-    loadRepositoryCodeSamples(repositoryPath, repository.default_branch, rootContents),
-    loadWorkflowSignals(repositoryPath, rootContents),
+    downloadAndExtractTarball(repositoryPath, repository.default_branch)
   ])
   const packageManifest = parsePackageManifest(rootFileContents['package.json'] ?? null)
   const packageScripts = extractPackageScripts(packageManifest)
@@ -346,193 +319,11 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
   }
 }
 
-async function loadRootFileContents(
-  repositoryPath: string,
-  rootContents: GitHubContentItem[],
-): Promise<Record<string, string>> {
-  const targetFiles = rootContents
-    .filter((item) => item.type === 'file')
-    .filter((item) => ROOT_FILES_TO_FETCH.has(item.name.toLowerCase()))
-    .map((item) => item.path)
 
-  const fileEntries = await Promise.all(
-    targetFiles.map(async (filePath) => [filePath, await fetchRepositoryFileText(repositoryPath, filePath)] as const),
-  )
 
-  return Object.fromEntries(fileEntries.filter((entry): entry is [string, string] => Boolean(entry[1])))
-}
 
-async function loadWorkflowSignals(
-  repositoryPath: string,
-  rootContents: GitHubContentItem[],
-): Promise<WorkflowSignal[]> {
-  const hasGitHubDirectory = rootContents.some(
-    (item) => item.type === 'dir' && item.name.toLowerCase() === '.github',
-  )
 
-  if (!hasGitHubDirectory) {
-    return []
-  }
 
-  const rawWorkflows = await fetchGitHubJson<GitHubContentItem[] | GitHubContentItem>(
-    `${repositoryPath}/contents/.github/workflows`,
-    { fallbackValue: [] },
-  )
-  const workflowFiles = Array.isArray(rawWorkflows) ? rawWorkflows : []
-  const selectedFiles = workflowFiles
-    .filter((item) => item.type === 'file' && WORKFLOW_FILE_PATTERN.test(item.name))
-    .sort((left, right) => left.path.localeCompare(right.path))
-    .slice(0, MAX_WORKFLOW_FILES)
-
-  const results = await Promise.all(
-    selectedFiles.map(async (file) => {
-      const text = await fetchRepositoryFileText(repositoryPath, file.path)
-      return buildWorkflowSignal(file.path, text)
-    }),
-  )
-
-  return results.filter((item): item is WorkflowSignal => Boolean(item))
-}
-
-async function loadRepositoryCodeSamples(
-  repositoryPath: string,
-  defaultBranch: string,
-  rootContents: GitHubContentItem[],
-): Promise<RepositoryCodeSample[]> {
-  const treePaths = await loadRepositoryCodeSamplePathsFromTree(
-    repositoryPath,
-    defaultBranch,
-  )
-  const selectedPaths =
-    treePaths && treePaths.length > 0
-      ? treePaths
-      : await collectRepositoryCodeSamplePathsFromContents(
-          repositoryPath,
-          rootContents,
-        )
-
-  const samples = await Promise.all(
-    selectedPaths.map(async (path) => {
-      const text = await fetchRepositoryFileText(repositoryPath, path)
-      return buildRepositoryCodeSample(path, text)
-    }),
-  )
-
-  return samples.filter((sample): sample is RepositoryCodeSample => Boolean(sample))
-}
-
-async function loadRepositoryCodeSamplePathsFromTree(
-  repositoryPath: string,
-  defaultBranch: string,
-): Promise<string[] | null> {
-  try {
-    const treeResponse = await fetchGitHubJson<GitHubTreeResponse>(
-      `${repositoryPath}/git/trees/${encodeURIComponent(defaultBranch)}?recursive=1`,
-    )
-
-    const treeEntries = treeResponse.tree ?? []
-
-    if (treeEntries.length === 0) {
-      return null
-    }
-
-    return treeEntries
-      .filter((entry) => entry.type === 'blob')
-      .map((entry) => entry.path)
-      .filter((path) => isCodeSampleCandidate(path))
-      .sort(compareFilePriority)
-      .slice(0, MAX_CODE_SAMPLE_FILES)
-  } catch {
-    return null
-  }
-}
-
-async function collectRepositoryCodeSamplePathsFromContents(
-  repositoryPath: string,
-  rootContents: GitHubContentItem[],
-): Promise<string[]> {
-  const candidatePaths = new Set<string>()
-  const rootDirectories = rootContents
-    .filter((item) => item.type === 'dir')
-    .filter((item) => !EXCLUDED_DIRECTORY_NAMES.has(item.name.toLowerCase()))
-    .sort(compareDirectoryPriority)
-    .slice(0, MAX_ROOT_DIRECTORIES)
-  const queue = rootDirectories.map((item) => ({
-    path: item.path,
-    depth: 1,
-  }))
-
-  for (const item of rootContents) {
-    if (item.type === 'file' && isCodeSampleCandidate(item.path)) {
-      candidatePaths.add(item.path)
-    }
-  }
-
-  while (queue.length > 0 && candidatePaths.size < MAX_CODE_SAMPLE_CANDIDATES) {
-    const current = queue.shift()
-
-    if (!current) {
-      break
-    }
-
-    const rawContents = await fetchGitHubJson<GitHubContentItem[] | GitHubContentItem>(
-      `${repositoryPath}/contents/${encodeGitHubPath(current.path)}`,
-      { fallbackValue: [] },
-    )
-    const directoryContents = Array.isArray(rawContents) ? rawContents : []
-    const files = directoryContents
-      .filter((item) => item.type === 'file')
-      .filter((item) => isCodeSampleCandidate(item.path))
-      .sort(compareFilePriority)
-
-    for (const file of files) {
-      candidatePaths.add(file.path)
-
-      if (candidatePaths.size >= MAX_CODE_SAMPLE_CANDIDATES) {
-        break
-      }
-    }
-
-    if (current.depth >= MAX_CODE_SAMPLE_DEPTH) {
-      continue
-    }
-
-    const nestedDirectories = directoryContents
-      .filter((item) => item.type === 'dir')
-      .filter((item) => shouldTraverseDirectory(item.name))
-      .sort(compareDirectoryPriority)
-      .slice(0, MAX_DIRECTORY_FANOUT)
-
-    for (const directory of nestedDirectories) {
-      queue.push({
-        path: directory.path,
-        depth: current.depth + 1,
-      })
-    }
-  }
-
-  return Array.from(candidatePaths)
-    .sort(compareFilePriority)
-    .slice(0, MAX_CODE_SAMPLE_FILES)
-}
-
-async function fetchRepositoryFileText(
-  repositoryPath: string,
-  filePath: string,
-): Promise<string | null> {
-  const response = await fetchGitHubJson<GitHubFileResponse | null>(
-    `${repositoryPath}/contents/${encodeGitHubPath(filePath)}`,
-    {
-      fallbackValue: null,
-    },
-  )
-
-  if (!response || response.type !== 'file' || !response.content || response.encoding !== 'base64') {
-    return null
-  }
-
-  return Buffer.from(response.content.replace(/\n/g, ''), 'base64').toString('utf8')
-}
 
 function buildWorkflowSignal(path: string, text: string | null): WorkflowSignal | null {
   if (!text) {
@@ -727,46 +518,7 @@ function shouldTraverseDirectory(name: string) {
   return !EXCLUDED_DIRECTORY_NAMES.has(name.toLowerCase())
 }
 
-function compareDirectoryPriority(left: GitHubContentItem, right: GitHubContentItem) {
-  return (
-    getDirectoryPriority(left.path) - getDirectoryPriority(right.path) || left.path.localeCompare(right.path)
-  )
-}
 
-function compareFilePriority(left: GitHubContentItem | string, right: GitHubContentItem | string) {
-  const leftPath = typeof left === 'string' ? left : left.path
-  const rightPath = typeof right === 'string' ? right : right.path
-
-  return getFilePriority(leftPath) - getFilePriority(rightPath) || leftPath.localeCompare(rightPath)
-}
-
-function getDirectoryPriority(path: string) {
-  const normalizedPath = path.toLowerCase()
-  const segments = normalizedPath.split('/')
-  const firstSegment = segments[0] ?? ''
-  const preferredIndex = SOURCE_DIRECTORY_PRIORITY.indexOf(firstSegment as (typeof SOURCE_DIRECTORY_PRIORITY)[number])
-  const depthPenalty = Math.max(0, segments.length - 1) * 4
-
-  return (preferredIndex === -1 ? 100 : preferredIndex * 10) + depthPenalty
-}
-
-function getFilePriority(path: string) {
-  const normalizedPath = path.toLowerCase()
-  const segments = normalizedPath.split('/')
-  const depthPenalty = Math.max(0, segments.length - 1) * 3
-  const firstSegment = segments[0] ?? ''
-  const preferredIndex = SOURCE_DIRECTORY_PRIORITY.indexOf(firstSegment as (typeof SOURCE_DIRECTORY_PRIORITY)[number])
-  const testPenalty = /(^|\/)(test|tests|__tests__|e2e|cypress|specs?)(\/|$)|\.(spec|test)\./.test(normalizedPath)
-    ? 30
-    : 0
-  const storyPenalty = /(^|\/)(__mocks__|fixtures?|stories)(\/|$)|\.stories\./.test(normalizedPath) ? 18 : 0
-  const generatedPenalty =
-    normalizedPath.includes('.generated.') || normalizedPath.endsWith('.d.ts') || normalizedPath.includes('/dist/')
-      ? 24
-      : 0
-
-  return (preferredIndex === -1 ? 40 : preferredIndex * 4) + depthPenalty + testPenalty + storyPenalty + generatedPenalty
-}
 
 function isCodeSampleCandidate(path: string) {
   const normalizedPath = path.toLowerCase()
@@ -913,7 +665,7 @@ function buildRepositorySignals({
   repository: GitHubRepositoryResponse
   languages: Record<string, number>
   commits: GitHubCommitResponse[]
-  rootContents: GitHubContentItem[]
+  rootContents: { name: string; type: 'dir' | 'file' }[]
   frameworks: string[]
   packageManifest: PackageManifest | null
   packageScripts: PackageScripts
@@ -951,7 +703,7 @@ function buildRepositorySignals({
   ).size
   const workflowNames = workflowSignals.map((workflow) => workflow.name)
   const readmePath =
-    rootContents.find((item) => item.type === 'file' && item.name.toLowerCase().startsWith('readme'))?.path ?? null
+    rootContents.find((item) => item.type === 'file' && item.name.toLowerCase().startsWith('readme'))?.name ?? null
   const hasReadme = Array.from(rootNames).some((name) => name.startsWith('readme'))
   const hasDocsDir = rootNames.has('docs')
   const hasContributing = rootNames.has('contributing.md') || rootNames.has('contributing')
@@ -1764,4 +1516,105 @@ function firstLine(message: string) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
+}
+
+
+type TarballExtractionResult = {
+  rootFileContents: Record<string, string>
+  workflowSignals: WorkflowSignal[]
+  codeSamples: RepositoryCodeSample[]
+  rootContents: { name: string, type: 'dir' | 'file' }[]
+}
+
+async function downloadAndExtractTarball(repositoryPath: string, branch: string): Promise<TarballExtractionResult> {
+  const response = await fetch(`${GITHUB_API_BASE}${repositoryPath}/tarball/${encodeURIComponent(branch)}`, {
+    headers: buildGitHubHeaders(),
+    cache: 'no-store'
+  })
+  
+  if (!response.ok) {
+    throw await createGitHubError(response)
+  }
+  
+  const arrayBuffer = await response.arrayBuffer()
+  
+  return new Promise((resolve, reject) => {
+    const extract = tar.extract()
+    const result: TarballExtractionResult = {
+      rootFileContents: {},
+      workflowSignals: [],
+      codeSamples: [],
+      rootContents: []
+    }
+    const rootItems = new Set<string>()
+    let totalCodeChars = 0
+    
+    extract.on('entry', (header, stream, next) => {
+      const parts = header.name.split('/')
+      parts.shift() // remove the top level hash dir from github tarball
+      const path = parts.join('/')
+      
+      if (!path) {
+        stream.resume()
+        return next()
+      }
+      
+      const isRootItem = parts.length === 1 || (parts.length === 2 && parts[1] === '')
+      if (isRootItem && parts[0]) {
+        const rootName = parts[0]
+        if (!rootItems.has(rootName)) {
+           rootItems.add(rootName)
+           result.rootContents.push({ name: rootName, type: header.type === 'directory' ? 'dir' : 'file' })
+        }
+      }
+      
+      if (header.type !== 'file') {
+        stream.resume()
+        return next()
+      }
+      
+      const isRootFile = parts.length === 1 && ROOT_FILES_TO_FETCH.has(path.toLowerCase())
+      const isWorkflow = path.startsWith('.github/workflows/') && WORKFLOW_FILE_PATTERN.test(path)
+      const isCode = isCodeSampleCandidate(path)
+      
+      if (!isRootFile && !isWorkflow && !isCode) {
+        stream.resume()
+        return next()
+      }
+      
+      const chunks: Buffer[] = []
+      stream.on('data', chunk => chunks.push(chunk))
+      stream.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8')
+        
+        if (isRootFile) {
+          result.rootFileContents[path] = text
+        }
+        
+        if (isWorkflow) {
+          const signal = buildWorkflowSignal(path, text)
+          if (signal) result.workflowSignals.push(signal)
+        }
+        
+        if (isCode && totalCodeChars < MAX_TOTAL_CHARS) {
+          const sample = buildRepositoryCodeSample(path, text)
+          if (sample) {
+            result.codeSamples.push(sample)
+            totalCodeChars += sample.snippet.length
+          }
+        }
+        
+        next()
+      })
+    })
+    
+    extract.on('finish', () => resolve(result))
+    extract.on('error', reject)
+    
+    const gunzip = zlib.createGunzip()
+    gunzip.on('error', reject)
+    
+    gunzip.pipe(extract)
+    gunzip.end(Buffer.from(arrayBuffer))
+  })
 }

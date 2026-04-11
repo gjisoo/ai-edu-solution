@@ -18,10 +18,10 @@ export function CleanCodeEvaluationCard({
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-xs uppercase tracking-[0.18em] text-slate-400">
-              Gemini 정성 평가
+              Gemini 실무 역량 종합 평가
             </p>
             <p className="mt-2 text-lg font-semibold text-slate-800">
-              아직 계산되지 않음
+              데이터 수집 대기 중
             </p>
           </div>
           <div className="rounded-full bg-[#f4efff] p-2">
@@ -29,8 +29,8 @@ export function CleanCodeEvaluationCard({
           </div>
         </div>
         <p className="mt-3 text-sm leading-6 text-slate-600">
-          Gemini가 코드 샘플과 정적 분석 근거를 함께 읽고 네이밍, 단일 책임,
-          복잡도, 에러 처리, 입력 검증, 모듈화를 항목별로 점수화합니다.
+          Gemini가 실제 저장소 코드를 분석하고 네이밍, 단일 책임,
+          복잡도, 에러 처리, 방어적 코드, 모듈화 등의 실무 관점 역량을 측정합니다.
         </p>
       </div>
     )
@@ -44,133 +44,141 @@ export function CleanCodeEvaluationCard({
   )
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[260px_minmax(0,1fr)]">
-      <div className="rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-5 shadow-sm">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-400">
-              Gemini 정성 평가
+    <div className="flex flex-col gap-6">
+      {/* Top Banner (Score) */}
+      <div className="relative overflow-hidden rounded-[32px] border border-white/70 bg-gradient-to-br from-white/90 to-white/50 p-6 shadow-[0_24px_60px_rgba(235,193,166,0.16)] backdrop-blur-xl md:p-8">
+        <div className="flex flex-col items-center gap-8 md:flex-row md:items-start md:justify-between lg:items-center">
+          
+          <div className="flex flex-1 flex-col gap-3">
+            <div className="inline-flex w-fit items-center gap-2 rounded-full bg-[#f4efff] px-3 py-1 shadow-sm">
+              <Bot className="h-4 w-4 text-[#7d6fff]" />
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#7163ea]">
+                Gemini 실무 역량 종합 평가
+              </p>
+            </div>
+            <h2 className="text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
+              실무 투입 가능 지수
+            </h2>
+            <p className="mt-2 max-w-xl text-base leading-7 text-slate-600">
+              {cleanCodeEvaluation.summary}
             </p>
-            <p className="mt-2 text-lg font-semibold text-slate-800">
-              클린 코드 점수
-            </p>
-          </div>
-          <div className="rounded-full bg-[#f4efff] p-2">
-            <Bot className="h-4 w-4 text-[#7d6fff]" />
-          </div>
-        </div>
 
-        <div className="mt-5 flex justify-center">
-          <div
-            className="relative flex h-36 w-36 items-center justify-center rounded-full"
-            style={{
-              background: `conic-gradient(#8c7df8 ${cleanCodeEvaluation.score * 3.6}deg, #7ed9c3 ${cleanCodeEvaluation.score * 3.6}deg, #ece8f8 0deg)`,
-            }}
-          >
-            <div className="flex h-24 w-24 flex-col items-center justify-center rounded-full bg-white shadow-inner">
-              <strong className="text-3xl font-black tracking-tight text-slate-900">
-                {cleanCodeEvaluation.score}
-              </strong>
-              <span className="mt-1 text-xs font-semibold text-slate-500">
-                / 100
-              </span>
+          </div>
+
+          <div className="flex shrink-0 items-center justify-center">
+            <div
+              className="relative flex h-48 w-48 items-center justify-center rounded-full shadow-xl"
+              style={{
+                background: `conic-gradient(#8c7df8 ${cleanCodeEvaluation.score * 3.6}deg, #7ed9c3 ${cleanCodeEvaluation.score * 3.6}deg, #f1ece6 0deg)`,
+              }}
+            >
+              <div className="flex h-36 w-36 flex-col items-center justify-center rounded-full bg-white shadow-[inset_0_4px_12px_rgba(0,0,0,0.05)]">
+                <strong className="text-5xl font-black tracking-tighter text-slate-900">
+                  {cleanCodeEvaluation.score}
+                </strong>
+                <span className="mt-1 text-sm font-bold uppercase tracking-widest text-slate-400">
+                  Score
+                </span>
+              </div>
             </div>
           </div>
+
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-          <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1">
-            <Sigma className="h-3.5 w-3.5" />
-            {cleanCodeEvaluation.formula}
-          </span>
-          {model ? (
-            <span className="rounded-full bg-[#f4efff] px-2.5 py-1 text-[#7163ea]">
-              {model}
-            </span>
-          ) : null}
-        </div>
-
-        <p className="mt-4 text-sm leading-6 text-slate-600">
-          {cleanCodeEvaluation.summary}
-        </p>
-
-        <div className="mt-4 grid gap-3">
+        <div className="mt-8 grid gap-4 sm:grid-cols-2">
           <MiniStat
             icon={TrendingUp}
-            label="가장 강한 항목"
+            label="가장 뛰어난 강점 역량"
             value={`${strongest.label} ${strongest.score}점`}
             tone="green"
           />
           <MiniStat
             icon={TrendingDown}
-            label="먼저 볼 항목"
+            label="우선 보완 필요 역량"
             value={`${weakest.label} ${weakest.score}점`}
             tone="rose"
           />
         </div>
       </div>
 
-      <div className="rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-5 shadow-sm">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-400">
-              항목별 그래프
-            </p>
-            <p className="mt-2 text-lg font-semibold text-slate-800">
-              6개 기준 비교
+      {/* Bottom Grid (Criteria) */}
+      <div className="rounded-[32px] border border-white/70 bg-white/60 p-6 shadow-sm backdrop-blur-md md:p-8">
+        <div className="flex flex-col gap-2">
+          <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#59b8a0]">
+            핵심 역량별 그래프
+          </p>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <h3 className="text-2xl font-bold text-slate-900">
+              실무 기준 6대 역량 요소 분석
+            </h3>
+            <p className="text-sm font-medium text-slate-500">
+              이력서와 포트폴리오의 강점으로 적극 활용해 보세요.
             </p>
           </div>
-          <p className="text-sm text-slate-500">점수가 낮을수록 먼저 보완</p>
         </div>
 
-        <div className="mt-5 space-y-4">
+        <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
           {cleanCodeEvaluation.criteria.map((criterion) => (
             <div
               key={criterion.key}
-              className="rounded-[20px] border border-[#ece7e2] bg-white/90 p-4"
+              className="group relative flex flex-col justify-between overflow-hidden rounded-[28px] border border-slate-200 bg-white p-7 shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-[#d9d4ff] hover:shadow-[0_20px_40px_-12px_rgba(113,99,234,0.15)]"
             >
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="font-semibold text-slate-900">
-                    {criterion.label}
-                  </p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    가중치 {Math.round(criterion.weight * 100)}%
-                  </p>
+              {/* Subtle top inner glow for premium feel */}
+              <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-[#f4efff] to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+
+              <div className="flex flex-col gap-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <p className="text-xl font-bold text-slate-900 transition-colors group-hover:text-[#7d6fff]">
+                      {criterion.label}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex items-center justify-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold uppercase tracking-widest text-slate-500">
+                        가중치
+                      </span>
+                      <span className="text-xs font-semibold text-slate-400">
+                        {Math.round(criterion.weight * 100)}%
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <div
+                    className={cn(
+                      'flex shrink-0 flex-col items-center justify-center rounded-2xl border px-4 py-2 font-black shadow-sm transition-colors',
+                      criterion.score >= 80 && 'border-emerald-100 bg-emerald-50 text-emerald-600 group-hover:border-emerald-200 group-hover:bg-emerald-100',
+                      criterion.score >= 60 &&
+                        criterion.score < 80 &&
+                        'border-amber-100 bg-amber-50 text-amber-600 group-hover:border-amber-200 group-hover:bg-amber-100',
+                      criterion.score < 60 && 'border-rose-100 bg-rose-50 text-rose-600 group-hover:border-rose-200 group-hover:bg-rose-100',
+                    )}
+                  >
+                    <span className="text-2xl tracking-tight leading-none">{criterion.score}</span>
+                    <span className="mt-1 text-[10px] font-bold uppercase tracking-widest opacity-70">점</span>
+                  </div>
                 </div>
-                <span
-                  className={cn(
-                    'rounded-full px-3 py-1 text-sm font-semibold',
-                    criterion.score >= 80 && 'bg-emerald-50 text-emerald-600',
-                    criterion.score >= 60 &&
-                      criterion.score < 80 &&
-                      'bg-amber-50 text-amber-600',
-                    criterion.score < 60 && 'bg-rose-50 text-rose-600',
-                  )}
-                >
-                  {criterion.score}점
-                </span>
+
+                <div className="h-3 w-full overflow-hidden rounded-full bg-slate-100 shadow-inner">
+                  <div
+                    className={cn(
+                      'h-full rounded-full transition-all duration-1000 ease-out',
+                      criterion.score >= 80 &&
+                        'bg-gradient-to-r from-emerald-400 to-emerald-300',
+                      criterion.score >= 60 &&
+                        criterion.score < 80 &&
+                        'bg-gradient-to-r from-amber-400 to-amber-300',
+                      criterion.score < 60 &&
+                        'bg-gradient-to-r from-rose-400 to-rose-300',
+                    )}
+                    style={{ width: `${criterion.score}%` }}
+                  />
+                </div>
               </div>
 
-              <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-[#f1ece6]">
-                <div
-                  className={cn(
-                    'h-full rounded-full transition-all duration-700',
-                    criterion.score >= 80 &&
-                      'bg-gradient-to-r from-emerald-400 to-emerald-300',
-                    criterion.score >= 60 &&
-                      criterion.score < 80 &&
-                      'bg-gradient-to-r from-amber-400 to-yellow-300',
-                    criterion.score < 60 &&
-                      'bg-gradient-to-r from-rose-400 to-orange-300',
-                  )}
-                  style={{ width: `${criterion.score}%` }}
-                />
+              <div className="mt-6 rounded-2xl bg-slate-50/80 p-5 group-hover:bg-[#fcfaff] transition-colors duration-300">
+                <p className="text-[15px] leading-[1.8] text-slate-700 font-medium">
+                  {criterion.rationale}
+                </p>
               </div>
-
-              <p className="mt-3 text-sm leading-6 text-slate-600">
-                {criterion.rationale}
-              </p>
             </div>
           ))}
         </div>

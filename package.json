@@ -26,6 +26,7 @@
     "@types/node": "^25.5.2",
     "@types/react": "^18.3.28",
     "@types/react-dom": "^18.3.7",
+    "@types/tar-stream": "^3.1.4",
     "autoprefixer": "^10.4.27",
     "postcss": "^8.5.8",
     "tailwindcss": "^3.4.17",
@@ -40,6 +41,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "recharts": "^3.8.1",
-    "tailwind-merge": "^3.5.0"
+    "tailwind-merge": "^3.5.0",
+    "tar-stream": "^3.1.8"
   }
 }

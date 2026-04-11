@@ -36,10 +36,10 @@ type DashboardTab = 'overview' | 'clean-code' | 'market-fit' | 'gaps' | 'activit
 type DetailModalKey = 'repo' | 'metrics' | null
 
 const dashboardTabs: Array<{ key: DashboardTab; label: string; description: string }> = [
-  { key: 'overview', label: '요약', description: '핵심 결과만 먼저 봅니다.' },
-  { key: 'clean-code', label: '클린 코드', description: '정성 평가와 정적 분석을 봅니다.' },
-  { key: 'market-fit', label: '시장 적합도', description: '직무별 적합도를 확인합니다.' },
-  { key: 'gaps', label: '보완 포인트', description: '우선 보완할 내용을 봅니다.' },
+  { key: 'overview', label: '요약', description: '내 역량 한눈에 보기' },
+  { key: 'clean-code', label: '코드 품질 지수', description: '실무 관점의 코드 품질을 확인합니다.' },
+  { key: 'market-fit', label: '직무/실무 적합도', description: '직무 요구사항 대비 내 현황을 봅니다.' },
+  { key: 'gaps', label: '집중 성장 포인트', description: '우선적으로 보완할 핵심 역량을 파악합니다.' },
   { key: 'activity', label: '활동 로그', description: '최근 분석 흐름을 봅니다.' },
 ]
 
@@ -120,13 +120,13 @@ export function DashboardShell() {
             <div className="max-w-3xl">
               <div className="inline-flex items-center gap-2 rounded-full border border-[#eadfdb] bg-[#fff8f2] px-3 py-1 text-xs font-semibold text-[#7d6fff]">
                 <Radar className="h-3.5 w-3.5" />
-                단순한 대시보드 모드
+                내 역량 한눈에 보기
               </div>
               <h1 className="mt-4 text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">
-                Dev-Radar 대시보드
+                개발 역량 집중 분석 대시보드
               </h1>
               <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-600 sm:text-base">
-                핵심 지표만 먼저 보여주고, 자세한 내용은 탭과 팝업으로 열어보는 구조입니다.
+                핵심 역량 지표와 집중 성장 포인트를 먼저 짚어주며, 상세 내용은 탭과 팝업으로 깊이 있게 분석할 수 있습니다.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -176,23 +176,23 @@ export function DashboardShell() {
             <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
               <SummaryActionCard
                 icon={Sparkles}
-                label="클린 코드 점수"
+                label="코드 품질 지수"
                 value={summaryStats.cleanCodeScore}
                 unit="점"
-                hint="Gemini 정성 평가"
+                hint="실무 투입 가능 척도"
                 onClick={() => setActiveTab('clean-code')}
               />
               <SummaryActionCard
                 icon={BriefcaseBusiness}
-                label="시장 적합도 평균"
+                label="직무/실무 적합도"
                 value={summaryStats.marketFitAverage}
                 unit="%"
-                hint="직무별 평균"
+                hint="직무별 평균 적합도"
                 onClick={() => setActiveTab('market-fit')}
               />
               <SummaryActionCard
                 icon={ShieldAlert}
-                label="보완 포인트"
+                label="보완 필요 집중 역량"
                 value={summaryStats.conceptGapCount}
                 unit="개"
                 hint="우선순위 확인"
@@ -200,10 +200,10 @@ export function DashboardShell() {
               />
               <SummaryActionCard
                 icon={GitBranch}
-                label="평가 기준 수"
+                label="핵심 개발 역량"
                 value={summaryStats.criteriaCount}
                 unit="개"
-                hint="Gemini 평가 항목"
+                hint="육각형 지표 항목"
                 onClick={() => setActiveTab('clean-code')}
               />
             </section>
@@ -252,13 +252,13 @@ export function DashboardShell() {
                     빠른 진단
                   </p>
                   <CardTitle className="mt-2 text-2xl text-slate-900">
-                    지금 가장 먼저 볼 포인트
+                    우선 집중해야 할 성장 포인트
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <QuickInfoCard
-                    title="현재 포커스"
-                    description={`${getFocusAreaLabel(analysis.metrics)}부터 보완하는 것이 가장 효과적입니다.`}
+                    title="핵심 포커스"
+                    description={`${getFocusAreaLabel(analysis.metrics)} 역량부터 보완하면 가장 즉각적인 성장이 기대됩니다.`}
                     tone="violet"
                   />
                   <QuickInfoCard
@@ -382,8 +382,8 @@ export function DashboardShell() {
 
           <DetailModal
             open={activeModal === 'metrics'}
-            title="6각형 평가 근거"
-            description="각 지표 점수가 왜 나왔는지 GitHub 신호와 분석 근거를 함께 봅니다."
+            title="육각형 개발자 지표 세부 근거"
+            description="각 역량 지수가 왜 이런 평가를 받았는지, 저장소 분석 근거를 함께 봅니다."
             onClose={() => setActiveModal(null)}
           >
             {analysis.metricBreakdown?.length ? (
@@ -440,8 +440,8 @@ function renderTabContent({
           <div className="rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">시장 적합도 미리보기</p>
-                <p className="mt-2 text-sm text-slate-600">점수만 먼저 보고 싶을 때 유용한 요약입니다.</p>
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">직무 적합도 요약</p>
+                <p className="mt-2 text-sm text-slate-600">주요 직무에 내 역량이 얼마나 부합하는지 미리 봅니다.</p>
               </div>
               <Button type="button" variant="secondary" onClick={() => onOpenModal('metrics')}>
                 근거 보기
@@ -466,50 +466,40 @@ function renderTabContent({
 
   if (activeTab === 'clean-code') {
     return (
-      <div className="grid gap-6 xl:grid-cols-[1.08fr_0.92fr]">
-        <CleanCodeEvaluationCard cleanCodeEvaluation={analysis.cleanCodeEvaluation} model={analysis.engine.model} />
-
-        <div className="space-y-4">
-          <QuickInfoCard
-            title="요약"
-            description="Gemini가 코드 샘플을 직접 읽고 변수명, 함수 책임 분리, 분기 복잡도, 에러 처리, 입력 검증, 모듈 분리를 항목별로 평가합니다."
-            tone="slate"
-          />
-          <div className="rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-400">평가 기준</p>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <InlineInfo label="기준 수" value={`${analysis.cleanCodeEvaluation?.criteria.length ?? 6}개`} />
-              <InlineInfo label="평가 공식" value={analysis.cleanCodeEvaluation?.formula ?? 'Score_clean = Σ w_i × c_i'} />
-            </div>
-            <p className="mt-3 text-sm leading-6 text-slate-600">
-              정적분석 규칙이 아니라 Gemini 정성 평가를 메인으로 사용합니다. 각 항목 점수는 코드 샘플의 네이밍, 책임 분리, 복잡도, 에러 처리, 입력 검증, 모듈화를 근거로 계산됩니다.
-            </p>
-            <div className="mt-4 flex flex-wrap gap-3">
-              <Button type="button" variant="secondary" onClick={() => onOpenModal('metrics')}>
-                6각형 근거 보기
-              </Button>
-            </div>
-          </div>
-        </div>
-      </div>
+      <CleanCodeEvaluationCard cleanCodeEvaluation={analysis.cleanCodeEvaluation} model={analysis.engine.model} />
     )
   }
 
   if (activeTab === 'market-fit') {
     return (
       <div className="space-y-4">
-        <SectionTitle title="직무별 시장 적합도" description="직무명은 단순화해서 보여주고, 점수와 부족 신호 개수만 먼저 확인합니다." />
+        <SectionTitle title="직무별 실무 적합도" description="직무별로 필요한 기술 스택 대비 내 저장소의 코드를 분석하여 적합도를 안내합니다." />
         <div className="grid gap-4">
           {analysis.marketFits.map((item, index) => (
-            <article key={`${item.targetJob}-${index}`} className="rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <strong className="text-slate-900">{marketFitLabels[index] ?? `직무 ${index + 1}`}</strong>
-                  <p className="mt-2 text-sm text-slate-600">부족한 기술 신호 {item.missingTech.length}개</p>
+            <article key={`${item.targetJob}-${index}`} className="flex flex-col justify-between rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-5 shadow-sm transition-shadow hover:shadow-md">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex flex-col gap-2">
+                  <strong className="text-lg font-bold text-slate-900">{marketFitLabels[index] ?? `직무 ${index + 1}`}</strong>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm font-medium text-slate-600">추가 확보 권장 기술:</p>
+                    {item.missingTech.length > 0 ? (
+                      item.missingTech.map(tech => (
+                        <span key={tech} className="inline-flex items-center rounded-md bg-rose-50 px-2 py-1 text-xs font-bold text-rose-600 ring-1 ring-inset ring-rose-500/20">
+                          {tech}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-sm text-slate-500">충분함</span>
+                    )}
+                  </div>
                 </div>
-                <span className="rounded-full bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-600">{item.similarityScore}%</span>
+                <div className="flex shrink-0 items-center justify-center rounded-full bg-emerald-50 px-4 py-1.5 font-bold text-emerald-600 shadow-sm ring-1 ring-inset ring-emerald-500/20">
+                  {item.similarityScore}%
+                </div>
               </div>
-              <Progress value={item.similarityScore} className="mt-4 h-2" indicatorClassName="bg-gradient-to-r from-[#7ed9c3] to-[#8c7df8]" />
+              <div className="mt-5">
+                <Progress value={item.similarityScore} className="h-2.5 shadow-inner bg-slate-100" indicatorClassName="bg-gradient-to-r from-emerald-400 to-[#7d6fff]" />
+              </div>
             </article>
           ))}
         </div>
@@ -520,7 +510,7 @@ function renderTabContent({
   if (activeTab === 'gaps') {
     return (
       <div className="space-y-4">
-        <SectionTitle title="우선 보완해야 할 포인트" description="낮은 점수 구간과 최근 분석 결과를 기준으로 먼저 손볼 부분만 추렸습니다." />
+        <SectionTitle title="우선 집중해야 할 갭(Gap)과 성장 포인트" description="내 목표에 도달하기 위해 가장 먼저 채워야 할 역량들을 중요도 순으로 정리했습니다." />
         <div className="grid gap-4">
           {getDisplayGaps(analysis).map((gap) => (
             <article key={gap.title} className="rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
