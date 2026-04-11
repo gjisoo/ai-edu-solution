@@ -18,6 +18,7 @@ import {
 import { parseGitHubRepositoryInput } from '@/lib/github/parse-repo-input'
 import { cn } from '@/lib/utils'
 import type { DashboardAnalysis } from '@/types/dev-radar'
+import { MetricBreakdownGrid } from '@/components/dashboard/metric-breakdown-grid'
 import { DashboardSkeleton } from '@/components/dashboard/dashboard-skeleton'
 import { RadarMetricChart } from '@/components/dashboard/radar-metric-chart'
 import { Button } from '@/components/ui/button'
@@ -339,8 +340,19 @@ export function DashboardShell() {
                     </span>
                   </div>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="space-y-6">
                   <RadarMetricChart metrics={analysis.metrics} />
+                  {analysis.metricBreakdown?.length ? (
+                    <div className="space-y-4 border-t border-[#eadfdb] pt-5">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.18em] text-slate-400">실제 평가 근거</p>
+                        <p className="mt-2 text-sm leading-6 text-slate-600">
+                          GitHub에서 실제로 감지한 문서, 스크립트, 워크플로 신호를 점수 옆에 함께 보여줍니다.
+                        </p>
+                      </div>
+                      <MetricBreakdownGrid metricBreakdown={analysis.metricBreakdown} />
+                    </div>
+                  ) : null}
                 </CardContent>
               </Card>
 

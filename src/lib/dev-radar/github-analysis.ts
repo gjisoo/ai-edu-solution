@@ -8,6 +8,7 @@ import type {
   DashboardAnalysis,
   DevMetric,
   MarketFit,
+  MetricBreakdown,
   RepositoryLanguage,
   ReviewSuggestion,
 } from '@/types/dev-radar'
@@ -42,6 +43,61 @@ const GENERIC_COMMIT_MESSAGES = new Set([
   'misc',
   'edit',
 ])
+const SOURCE_DIRECTORY_PRIORITY = [
+  'src',
+  'app',
+  'components',
+  'lib',
+  'pages',
+  'packages',
+  'server',
+  'client',
+  'backend',
+  'frontend',
+  'api',
+  'services',
+] as const
+const EXCLUDED_DIRECTORY_NAMES = new Set([
+  '.git',
+  '.github',
+  '.next',
+  '.nuxt',
+  '.turbo',
+  '.vercel',
+  'coverage',
+  'dist',
+  'build',
+  'vendor',
+  'node_modules',
+  'public',
+  'assets',
+  'static',
+  'storybook-static',
+])
+const CODE_FILE_LANGUAGES: Record<string, string> = {
+  '.ts': 'TypeScript',
+  '.tsx': 'TSX',
+  '.js': 'JavaScript',
+  '.jsx': 'JSX',
+  '.py': 'Python',
+  '.go': 'Go',
+  '.rs': 'Rust',
+  '.java': 'Java',
+  '.kt': 'Kotlin',
+  '.kts': 'Kotlin',
+  '.cs': 'C#',
+  '.rb': 'Ruby',
+  '.php': 'PHP',
+}
+const MAX_CODE_SAMPLE_DEPTH = 3
+const MAX_CODE_SAMPLE_FILES = 6
+const MAX_CODE_SAMPLE_CANDIDATES = 18
+const MAX_DIRECTORY_FANOUT = 8
+const MAX_ROOT_DIRECTORIES = 10
+const MAX_CODE_SAMPLE_LINES = 90
+const MAX_CODE_SAMPLE_CHARS = 2600
+const MAX_WORKFLOW_FILES = 8
+const WORKFLOW_FILE_PATTERN = /\.(ya?ml)$/i
 
 type GitHubRepositoryResponse = {
   name: string
@@ -93,6 +149,32 @@ type GitHubFileResponse = {
 type PackageManifest = {
   dependencies?: Record<string, string>
   devDependencies?: Record<string, string>
+  scripts?: Record<string, string>
+}
+
+type RepositoryCodeSample = {
+  path: string
+  language: string
+  snippet: string
+  truncated: boolean
+}
+
+type PackageScripts = {
+  build: string | null
+  test: string | null
+  lint: string | null
+  typecheck: string | null
+}
+
+type WorkflowSignal = {
+  path: string
+  name: string
+  hasBuild: boolean
+  hasTest: boolean
+  hasLint: boolean
+  hasTypecheck: boolean
+  hasSecurity: boolean
+  hasDeploy: boolean
 }
 
 class GitHubAnalysisError extends Error {
@@ -122,8 +204,13 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
   ])
 
   const rootContents = Array.isArray(rootContentsRaw) ? rootContentsRaw : []
-  const rootFileContents = await loadRootFileContents(repositoryPath, rootContents)
+  const [rootFileContents, codeSamples, workflowSignals] = await Promise.all([
+    loadRootFileContents(repositoryPath, rootContents),
+    loadRepositoryCodeSamples(repositoryPath, rootContents),
+    loadWorkflowSignals(repositoryPath, rootContents),
+  ])
   const packageManifest = parsePackageManifest(rootFileContents['package.json'] ?? null)
+  const packageScripts = extractPackageScripts(packageManifest)
   const frameworks = detectFrameworks({
     languages,
     packageManifest,
@@ -136,8 +223,12 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
     rootContents,
     frameworks,
     packageManifest,
+    packageScripts,
+    workflowSignals,
+    codeSampleCount: codeSamples.length,
   })
   const metrics = buildMetrics(repositorySignals)
+  const metricBreakdown = buildMetricBreakdown(metrics, repositorySignals)
   const marketFits = buildMarketFits(repositorySignals)
   const reviewSuggestions = buildReviewSuggestions(repositorySignals)
   const conceptGaps = buildConceptGaps(repositorySignals)
@@ -169,17 +260,10 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
     aiInsight: null,
     collectedAt: formatDateTime(new Date()),
     dailyLines: estimateDailyLines(repository.size, commits.length, repositorySignals.daysSinceLastPush),
-    cleanCodeScore: Math.round(
-      (metrics.readability +
-        metrics.architecture +
-        metrics.consistency +
-        metrics.modernity +
-        metrics.security +
-        metrics.efficiency) /
-        6,
-    ),
+    cleanCodeScore: calculateCleanCodeScore(metrics),
     focusArea: describeWeakestMetric(metrics),
     metrics,
+    metricBreakdown,
     marketFits,
     conceptGaps,
     reviewSuggestions,
@@ -212,6 +296,7 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
       author: commit.author?.login ?? commit.commit.author?.name ?? null,
       date: commit.commit.author?.date ?? null,
     })),
+    codeSamples,
   })
 
   if (!aiEnhancement) {
@@ -222,11 +307,14 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
     ...heuristicAnalysis,
     engine: {
       mode: 'hybrid-ai',
-      label: 'GitHub API + Gemini 분석',
+      label: 'GitHub API + Gemini 코드 평가',
       model: aiEnhancement.model,
     },
+    cleanCodeScore: calculateCleanCodeScore(aiEnhancement.metrics),
     aiInsight: aiEnhancement.aiInsight,
     focusArea: aiEnhancement.focusArea,
+    metrics: aiEnhancement.metrics,
+    metricBreakdown: buildMetricBreakdown(aiEnhancement.metrics, repositorySignals),
     reviewSuggestions: aiEnhancement.reviewSuggestions.map((item, index) => ({
       id: `ai-review-${index + 1}`,
       title: item.title,
@@ -261,18 +349,121 @@ async function loadRootFileContents(
   return Object.fromEntries(fileEntries.filter((entry): entry is [string, string] => Boolean(entry[1])))
 }
 
+async function loadWorkflowSignals(
+  repositoryPath: string,
+  rootContents: GitHubContentItem[],
+): Promise<WorkflowSignal[]> {
+  const hasGitHubDirectory = rootContents.some(
+    (item) => item.type === 'dir' && item.name.toLowerCase() === '.github',
+  )
+
+  if (!hasGitHubDirectory) {
+    return []
+  }
+
+  const rawWorkflows = await fetchGitHubJson<GitHubContentItem[] | GitHubContentItem>(
+    `${repositoryPath}/contents/.github/workflows`,
+    { fallbackValue: [] },
+  )
+  const workflowFiles = Array.isArray(rawWorkflows) ? rawWorkflows : []
+  const selectedFiles = workflowFiles
+    .filter((item) => item.type === 'file' && WORKFLOW_FILE_PATTERN.test(item.name))
+    .sort((left, right) => left.path.localeCompare(right.path))
+    .slice(0, MAX_WORKFLOW_FILES)
+
+  const results = await Promise.all(
+    selectedFiles.map(async (file) => {
+      const text = await fetchRepositoryFileText(repositoryPath, file.path)
+      return buildWorkflowSignal(file.path, text)
+    }),
+  )
+
+  return results.filter((item): item is WorkflowSignal => Boolean(item))
+}
+
+async function loadRepositoryCodeSamples(
+  repositoryPath: string,
+  rootContents: GitHubContentItem[],
+): Promise<RepositoryCodeSample[]> {
+  const candidatePaths = new Set<string>()
+  const rootDirectories = rootContents
+    .filter((item) => item.type === 'dir')
+    .filter((item) => !EXCLUDED_DIRECTORY_NAMES.has(item.name.toLowerCase()))
+    .sort(compareDirectoryPriority)
+    .slice(0, MAX_ROOT_DIRECTORIES)
+  const queue = rootDirectories.map((item) => ({
+    path: item.path,
+    depth: 1,
+  }))
+
+  for (const item of rootContents) {
+    if (item.type === 'file' && isCodeSampleCandidate(item.path)) {
+      candidatePaths.add(item.path)
+    }
+  }
+
+  while (queue.length > 0 && candidatePaths.size < MAX_CODE_SAMPLE_CANDIDATES) {
+    const current = queue.shift()
+
+    if (!current) {
+      break
+    }
+
+    const rawContents = await fetchGitHubJson<GitHubContentItem[] | GitHubContentItem>(
+      `${repositoryPath}/contents/${encodeGitHubPath(current.path)}`,
+      { fallbackValue: [] },
+    )
+    const directoryContents = Array.isArray(rawContents) ? rawContents : []
+    const files = directoryContents
+      .filter((item) => item.type === 'file')
+      .filter((item) => isCodeSampleCandidate(item.path))
+      .sort(compareFilePriority)
+
+    for (const file of files) {
+      candidatePaths.add(file.path)
+
+      if (candidatePaths.size >= MAX_CODE_SAMPLE_CANDIDATES) {
+        break
+      }
+    }
+
+    if (current.depth >= MAX_CODE_SAMPLE_DEPTH) {
+      continue
+    }
+
+    const nestedDirectories = directoryContents
+      .filter((item) => item.type === 'dir')
+      .filter((item) => shouldTraverseDirectory(item.name))
+      .sort(compareDirectoryPriority)
+      .slice(0, MAX_DIRECTORY_FANOUT)
+
+    for (const directory of nestedDirectories) {
+      queue.push({
+        path: directory.path,
+        depth: current.depth + 1,
+      })
+    }
+  }
+
+  const selectedPaths = Array.from(candidatePaths).sort(compareFilePriority).slice(0, MAX_CODE_SAMPLE_FILES)
+  const samples = await Promise.all(
+    selectedPaths.map(async (path) => {
+      const text = await fetchRepositoryFileText(repositoryPath, path)
+      return buildRepositoryCodeSample(path, text)
+    }),
+  )
+
+  return samples.filter((sample): sample is RepositoryCodeSample => Boolean(sample))
+}
+
 async function fetchRepositoryFileText(
   repositoryPath: string,
   filePath: string,
 ): Promise<string | null> {
-  const encodedPath = filePath
-    .split('/')
-    .map((segment) => encodeURIComponent(segment))
-    .join('/')
   const response = await fetchGitHubJson<GitHubFileResponse | null>(
-    `${repositoryPath}/contents/${encodedPath}`,
+    `${repositoryPath}/contents/${encodeGitHubPath(filePath)}`,
     {
-    fallbackValue: null,
+      fallbackValue: null,
     },
   )
 
@@ -281,6 +472,69 @@ async function fetchRepositoryFileText(
   }
 
   return Buffer.from(response.content.replace(/\n/g, ''), 'base64').toString('utf8')
+}
+
+function buildWorkflowSignal(path: string, text: string | null): WorkflowSignal | null {
+  if (!text) {
+    return null
+  }
+
+  const normalized = text.replace(/\r\n?/g, '\n')
+  const lower = normalized.toLowerCase()
+
+  return {
+    path,
+    name: extractWorkflowName(normalized) ?? path.split('/').pop() ?? path,
+    hasBuild: /\b(build|compile|bundle|package)\b/.test(lower),
+    hasTest: /\b(test|jest|vitest|pytest|playwright|cypress)\b/.test(lower),
+    hasLint: /\b(lint|eslint|stylelint|biome|ruff)\b/.test(lower),
+    hasTypecheck: /\b(typecheck|type-check|tsc\b|mypy\b|pyright\b)\b/.test(lower),
+    hasSecurity: /\b(codeql|snyk|trivy|dependabot|audit|osv)\b/.test(lower),
+    hasDeploy: /\b(deploy|release|publish|docker buildx|vercel|netlify)\b/.test(lower),
+  }
+}
+
+function buildRepositoryCodeSample(path: string, text: string | null): RepositoryCodeSample | null {
+  if (!text) {
+    return null
+  }
+
+  const normalized = text.replace(/\r\n?/g, '\n').trim()
+
+  if (!normalized) {
+    return null
+  }
+
+  const lines = normalized.split('\n')
+  const snippetLines: string[] = []
+  let currentLength = 0
+  let index = 0
+
+  while (index < lines.length && snippetLines.length < MAX_CODE_SAMPLE_LINES) {
+    const nextLine = lines[index]
+    const nextLength = currentLength + nextLine.length + 1
+
+    if (nextLength > MAX_CODE_SAMPLE_CHARS) {
+      break
+    }
+
+    snippetLines.push(nextLine)
+    currentLength = nextLength
+    index += 1
+  }
+
+  const snippet = snippetLines.join('\n').trim()
+
+  if (snippet.length < 80) {
+    return null
+  }
+
+  return {
+    path,
+    language: detectCodeSampleLanguage(path),
+    snippet,
+    truncated: index < lines.length,
+  }
 }
 
 async function fetchGitHubJson<T>(
@@ -317,6 +571,13 @@ function buildGitHubHeaders() {
   }
 
   return headers
+}
+
+function encodeGitHubPath(filePath: string) {
+  return filePath
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/')
 }
 
 async function createGitHubError(response: Response) {
@@ -366,6 +627,120 @@ function parsePackageManifest(text: string | null): PackageManifest | null {
   } catch {
     return null
   }
+}
+
+function extractPackageScripts(packageManifest: PackageManifest | null): PackageScripts {
+  const scripts = packageManifest?.scripts ?? {}
+
+  return {
+    build: pickPackageScript(scripts, ['build']),
+    test: pickPackageScript(scripts, ['test', 'test:ci']),
+    lint: pickPackageScript(scripts, ['lint', 'check:lint']),
+    typecheck: pickPackageScript(scripts, ['typecheck', 'type-check', 'check-types', 'check:type']),
+  }
+}
+
+function pickPackageScript(
+  scripts: Record<string, string>,
+  candidates: string[],
+): string | null {
+  for (const candidate of candidates) {
+    if (typeof scripts[candidate] === 'string' && scripts[candidate].trim()) {
+      return scripts[candidate]
+    }
+  }
+
+  return null
+}
+
+function extractWorkflowName(text: string) {
+  const match = text.match(/^\s*name\s*:\s*(.+)$/m)
+
+  if (!match?.[1]) {
+    return null
+  }
+
+  return match[1].trim().replace(/^['"]|['"]$/g, '')
+}
+
+function shouldTraverseDirectory(name: string) {
+  return !EXCLUDED_DIRECTORY_NAMES.has(name.toLowerCase())
+}
+
+function compareDirectoryPriority(left: GitHubContentItem, right: GitHubContentItem) {
+  return (
+    getDirectoryPriority(left.path) - getDirectoryPriority(right.path) || left.path.localeCompare(right.path)
+  )
+}
+
+function compareFilePriority(left: GitHubContentItem | string, right: GitHubContentItem | string) {
+  const leftPath = typeof left === 'string' ? left : left.path
+  const rightPath = typeof right === 'string' ? right : right.path
+
+  return getFilePriority(leftPath) - getFilePriority(rightPath) || leftPath.localeCompare(rightPath)
+}
+
+function getDirectoryPriority(path: string) {
+  const normalizedPath = path.toLowerCase()
+  const segments = normalizedPath.split('/')
+  const firstSegment = segments[0] ?? ''
+  const preferredIndex = SOURCE_DIRECTORY_PRIORITY.indexOf(firstSegment as (typeof SOURCE_DIRECTORY_PRIORITY)[number])
+  const depthPenalty = Math.max(0, segments.length - 1) * 4
+
+  return (preferredIndex === -1 ? 100 : preferredIndex * 10) + depthPenalty
+}
+
+function getFilePriority(path: string) {
+  const normalizedPath = path.toLowerCase()
+  const segments = normalizedPath.split('/')
+  const depthPenalty = Math.max(0, segments.length - 1) * 3
+  const firstSegment = segments[0] ?? ''
+  const preferredIndex = SOURCE_DIRECTORY_PRIORITY.indexOf(firstSegment as (typeof SOURCE_DIRECTORY_PRIORITY)[number])
+  const testPenalty = /(^|\/)(test|tests|__tests__|e2e|cypress|specs?)(\/|$)|\.(spec|test)\./.test(normalizedPath)
+    ? 30
+    : 0
+  const storyPenalty = /(^|\/)(__mocks__|fixtures?|stories)(\/|$)|\.stories\./.test(normalizedPath) ? 18 : 0
+  const generatedPenalty =
+    normalizedPath.includes('.generated.') || normalizedPath.endsWith('.d.ts') || normalizedPath.includes('/dist/')
+      ? 24
+      : 0
+
+  return (preferredIndex === -1 ? 40 : preferredIndex * 4) + depthPenalty + testPenalty + storyPenalty + generatedPenalty
+}
+
+function isCodeSampleCandidate(path: string) {
+  const normalizedPath = path.toLowerCase()
+  const extension = getPathExtension(normalizedPath)
+
+  if (!extension || !(extension in CODE_FILE_LANGUAGES)) {
+    return false
+  }
+
+  if (
+    normalizedPath.includes('/node_modules/') ||
+    normalizedPath.includes('/dist/') ||
+    normalizedPath.includes('/build/') ||
+    normalizedPath.includes('/coverage/')
+  ) {
+    return false
+  }
+
+  return true
+}
+
+function detectCodeSampleLanguage(path: string) {
+  return CODE_FILE_LANGUAGES[getPathExtension(path.toLowerCase())] ?? 'Code'
+}
+
+function getPathExtension(path: string) {
+  const fileName = path.split('/').pop() ?? path
+  const dotIndex = fileName.lastIndexOf('.')
+
+  if (dotIndex === -1) {
+    return ''
+  }
+
+  return fileName.slice(dotIndex)
 }
 
 function detectFrameworks({
@@ -471,6 +846,9 @@ function buildRepositorySignals({
   rootContents,
   frameworks,
   packageManifest,
+  packageScripts,
+  workflowSignals,
+  codeSampleCount,
 }: {
   repository: GitHubRepositoryResponse
   languages: Record<string, number>
@@ -478,6 +856,9 @@ function buildRepositorySignals({
   rootContents: GitHubContentItem[]
   frameworks: string[]
   packageManifest: PackageManifest | null
+  packageScripts: PackageScripts
+  workflowSignals: WorkflowSignal[]
+  codeSampleCount: number
 }) {
   const now = Date.now()
   const rootNames = new Set(rootContents.map((item) => item.name.toLowerCase()))
@@ -508,19 +889,36 @@ function buildRepositorySignals({
       .map((commit) => commit.author?.login ?? commit.commit.author?.email ?? commit.commit.author?.name)
       .filter(Boolean),
   ).size
+  const workflowNames = workflowSignals.map((workflow) => workflow.name)
+  const readmePath =
+    rootContents.find((item) => item.type === 'file' && item.name.toLowerCase().startsWith('readme'))?.path ?? null
   const hasReadme = Array.from(rootNames).some((name) => name.startsWith('readme'))
   const hasDocsDir = rootNames.has('docs')
+  const hasContributing = rootNames.has('contributing.md') || rootNames.has('contributing')
   const hasSourceDir = rootNames.has('src') || rootNames.has('app') || rootNames.has('packages')
+  const hasBuildScript = Boolean(packageScripts.build)
+  const hasTestScript = Boolean(packageScripts.test)
+  const hasLintScript = Boolean(packageScripts.lint)
+  const hasTypecheckScript = Boolean(packageScripts.typecheck)
+  const hasWorkflowBuild = workflowSignals.some((workflow) => workflow.hasBuild)
+  const hasWorkflowTest = workflowSignals.some((workflow) => workflow.hasTest)
+  const hasWorkflowLint = workflowSignals.some((workflow) => workflow.hasLint)
+  const hasWorkflowTypecheck = workflowSignals.some((workflow) => workflow.hasTypecheck)
+  const hasWorkflowSecurity = workflowSignals.some((workflow) => workflow.hasSecurity)
+  const hasWorkflowDeploy = workflowSignals.some((workflow) => workflow.hasDeploy)
   const hasTests =
     rootNames.has('test') ||
     rootNames.has('tests') ||
     rootNames.has('__tests__') ||
     rootNames.has('cypress') ||
     rootNames.has('e2e') ||
+    hasTestScript ||
+    hasWorkflowTest ||
     frameworks.some((framework) =>
       ['Jest', 'Vitest', 'Pytest', 'Playwright', 'Cypress'].includes(framework),
     )
   const hasCi =
+    workflowSignals.length > 0 ||
     rootNames.has('.github') ||
     rootNames.has('.circleci') ||
     rootNames.has('.gitlab-ci.yml') ||
@@ -542,6 +940,8 @@ function buildRepositorySignals({
     rootNames.has('.eslintrc.cjs') ||
     rootNames.has('eslint.config.js') ||
     rootNames.has('eslint.config.mjs') ||
+    hasLintScript ||
+    hasWorkflowLint ||
     dependencyNames.has('eslint') ||
     dependencyNames.has('@biomejs/biome') ||
     dependencyNames.has('ruff')
@@ -582,14 +982,29 @@ function buildRepositorySignals({
     mainLanguages,
     frameworks,
     stackLabels,
+    workflowNames,
+    readmePath,
     hasReadme,
     hasDocsDir,
+    hasContributing,
     hasSourceDir,
     hasTests,
     hasCi,
     hasDocker,
     hasInfra,
     hasLint,
+    hasBuildScript,
+    hasTestScript,
+    hasLintScript,
+    hasTypecheckScript,
+    hasWorkflowBuild,
+    hasWorkflowTest,
+    hasWorkflowLint,
+    hasWorkflowTypecheck,
+    hasWorkflowSecurity,
+    hasWorkflowDeploy,
+    workflowCount: workflowSignals.length,
+    codeSampleCount,
     hasLockfile,
     hasSecurityFile,
     hasTypedLanguage,
@@ -604,32 +1019,40 @@ function buildRepositorySignals({
 function buildMetrics(signals: ReturnType<typeof buildRepositorySignals>): DevMetric {
   return {
     readability: clamp(
-      40 +
+      38 +
         (signals.hasReadme ? 15 : 0) +
         (signals.repository.description ? 8 : 0) +
         Math.min(signals.repository.topics?.length ?? 0, 4) * 3 +
         (signals.hasDocsDir ? 8 : 0) +
-        Math.round(signals.meaningfulCommitRatio * 17),
+        (signals.hasContributing ? 6 : 0) +
+        Math.round(signals.meaningfulCommitRatio * 15) +
+        (signals.codeSampleCount >= 2 ? 4 : 0),
       0,
       100,
     ),
     efficiency: clamp(
-      38 +
-        Math.min(signals.commits.length, 12) * 3 +
-        (signals.hasCi ? 12 : 0) +
-        (signals.hasTests ? 10 : 0) +
-        (signals.hasLint ? 8 : 0) +
+      34 +
+        Math.min(signals.commits.length, 12) * 2 +
+        (signals.hasBuildScript ? 8 : 0) +
+        (signals.hasTestScript ? 8 : 0) +
+        (signals.hasLintScript ? 4 : 0) +
+        (signals.hasCi ? 8 : 0) +
+        (signals.hasWorkflowBuild ? 7 : 0) +
+        (signals.hasWorkflowTest ? 7 : 0) +
+        (signals.hasWorkflowLint ? 4 : 0) +
         activityBonus(signals.daysSinceLastPush),
       0,
       100,
     ),
     security: clamp(
-      35 +
-        (signals.hasCi ? 14 : 0) +
+      33 +
+        (signals.hasCi ? 8 : 0) +
+        (signals.hasWorkflowSecurity ? 12 : 0) +
         (signals.hasLockfile ? 10 : 0) +
-        (signals.hasTests ? 8 : 0) +
+        (signals.hasTests ? 6 : 0) +
         (signals.hasSecurityFile ? 12 : 0) +
-        (signals.hasDocker ? 6 : 0),
+        (signals.hasDocker ? 4 : 0) +
+        (signals.hasTypecheckScript ? 5 : 0),
       0,
       100,
     ),
@@ -640,30 +1063,255 @@ function buildMetrics(signals: ReturnType<typeof buildRepositorySignals>): DevMe
         (signals.hasDocker ? 8 : 0) +
         (signals.stackLabels.length > 1 ? 10 : 0) +
         (signals.mainLanguages.length > 1 ? 6 : 0) +
-        (signals.repository.size > 900 ? 8 : 0),
+        (signals.repository.size > 900 ? 8 : 0) +
+        (signals.hasBuildScript ? 4 : 0) +
+        (signals.codeSampleCount >= 3 ? 4 : 0),
       0,
       100,
     ),
     consistency: clamp(
-      42 +
-        (signals.hasLint ? 12 : 0) +
-        (signals.hasTests ? 10 : 0) +
-        (signals.hasCi ? 10 : 0) +
-        Math.round(signals.meaningfulCommitRatio * 14) +
+      40 +
+        (signals.hasLint ? 10 : 0) +
+        (signals.hasTestScript ? 6 : 0) +
+        (signals.hasTests ? 6 : 0) +
+        (signals.hasCi ? 8 : 0) +
+        (signals.hasWorkflowLint ? 6 : 0) +
+        (signals.hasWorkflowTypecheck ? 6 : 0) +
+        Math.round(signals.meaningfulCommitRatio * 12) +
         (signals.hasTypedLanguage ? 8 : 0),
       0,
       100,
     ),
     modernity: clamp(
-      36 +
+      34 +
         (signals.hasTypedLanguage ? 14 : 0) +
         activityBonus(signals.daysSinceLastPush) +
         modernStackBonus(signals.frameworks) +
-        (signals.hasCi ? 8 : 0) +
-        (signals.hasDocker ? 8 : 0),
+        (signals.hasCi ? 6 : 0) +
+        (signals.hasDocker ? 6 : 0) +
+        (signals.hasWorkflowDeploy ? 8 : 0) +
+        (signals.hasTypecheckScript ? 4 : 0),
       0,
       100,
     ),
+  }
+}
+
+function buildMetricBreakdown(
+  metrics: DevMetric,
+  signals: ReturnType<typeof buildRepositorySignals>,
+): MetricBreakdown[] {
+  return [
+    {
+      metric: 'readability',
+      label: '가독성',
+      score: metrics.readability,
+      summary: summarizeMetric('readability', metrics.readability),
+      signals: [
+        createMetricSignal(
+          signals.hasReadme ? 'positive' : 'warning',
+          'README',
+          signals.hasReadme
+            ? `${signals.readmePath ?? 'README'} 진입 문서를 감지했습니다.`
+            : '저장소 첫 진입 문서가 없어 맥락 파악 비용이 큽니다.',
+        ),
+        createMetricSignal(
+          signals.hasDocsDir || signals.hasContributing ? 'positive' : 'neutral',
+          '문서 범위',
+          signals.hasDocsDir || signals.hasContributing
+            ? 'docs 또는 기여 문서가 있어 협업 맥락을 설명합니다.'
+            : '추가 문서 신호가 얇아 의도 전달은 README에 크게 의존합니다.',
+        ),
+        createMetricSignal(
+          signals.meaningfulCommitRatio >= 0.7 ? 'positive' : signals.meaningfulCommitRatio >= 0.45 ? 'neutral' : 'warning',
+          '커밋 메시지',
+          `설명형 커밋 비율 ${Math.round(signals.meaningfulCommitRatio * 100)}%를 반영했습니다.`,
+        ),
+      ],
+    },
+    {
+      metric: 'efficiency',
+      label: '효율성',
+      score: metrics.efficiency,
+      summary: summarizeMetric('efficiency', metrics.efficiency),
+      signals: [
+        createMetricSignal(
+          signals.hasBuildScript ? 'positive' : 'warning',
+          '빌드 스크립트',
+          signals.hasBuildScript ? '실행 가능한 build 스크립트를 확인했습니다.' : 'build 스크립트가 없어 재현 가능한 검증 경로가 약합니다.',
+        ),
+        createMetricSignal(
+          signals.hasWorkflowBuild || signals.hasWorkflowTest ? 'positive' : 'warning',
+          '자동화 워크플로',
+          signals.hasWorkflowBuild || signals.hasWorkflowTest
+            ? `${signals.workflowCount}개의 워크플로에서 빌드 또는 테스트 자동화를 감지했습니다.`
+            : '빌드·테스트 자동화 워크플로가 보이지 않습니다.',
+        ),
+        createMetricSignal(
+          signals.daysSinceLastPush <= 14 ? 'positive' : signals.daysSinceLastPush <= 45 ? 'neutral' : 'warning',
+          '최근 활동',
+          `${signals.daysSinceLastPush}일 전 마지막 푸시를 반영했습니다.`,
+        ),
+      ],
+    },
+    {
+      metric: 'security',
+      label: '보안성',
+      score: metrics.security,
+      summary: summarizeMetric('security', metrics.security),
+      signals: [
+        createMetricSignal(
+          signals.hasLockfile ? 'positive' : 'warning',
+          '버전 고정',
+          signals.hasLockfile ? '잠금 파일이 있어 의존성 재현성이 높습니다.' : '잠금 파일이 없어 의존성 드리프트 위험이 있습니다.',
+        ),
+        createMetricSignal(
+          signals.hasWorkflowSecurity || signals.hasSecurityFile ? 'positive' : 'warning',
+          '보안 신호',
+          signals.hasWorkflowSecurity || signals.hasSecurityFile
+            ? '보안 문서 또는 스캔 워크플로를 감지했습니다.'
+            : '보안 정책이나 스캔 자동화가 아직 얇습니다.',
+        ),
+        createMetricSignal(
+          signals.hasTypecheckScript ? 'positive' : 'neutral',
+          '검증 강도',
+          signals.hasTypecheckScript
+            ? '타입 검증 스크립트가 있어 런타임 전 조기 차단 신호가 있습니다.'
+            : '정적 검증 스크립트 신호는 제한적입니다.',
+        ),
+      ],
+    },
+    {
+      metric: 'architecture',
+      label: '아키텍처',
+      score: metrics.architecture,
+      summary: summarizeMetric('architecture', metrics.architecture),
+      signals: [
+        createMetricSignal(
+          signals.hasSourceDir ? 'positive' : 'warning',
+          '소스 구조',
+          signals.hasSourceDir ? 'src, app, packages 같은 소스 디렉터리 구조를 확인했습니다.' : '소스 구조가 루트에 많이 섞여 있을 가능성이 있습니다.',
+        ),
+        createMetricSignal(
+          signals.stackLabels.length > 1 || signals.mainLanguages.length > 1 ? 'positive' : 'neutral',
+          '스택 구성',
+          signals.stackLabels.length > 0
+            ? `${signals.stackLabels.join(', ')} 조합을 감지했습니다.`
+            : '프레임워크 신호가 적어 구조적 역할 분담을 판단하기 어렵습니다.',
+        ),
+        createMetricSignal(
+          signals.hasDocker || signals.hasInfra ? 'positive' : 'neutral',
+          '운영 준비',
+          signals.hasDocker || signals.hasInfra
+            ? '인프라 또는 실행 패키징 신호가 있어 구조 확장성을 뒷받침합니다.'
+            : '운영 관점의 구조 신호는 아직 약합니다.',
+        ),
+      ],
+    },
+    {
+      metric: 'consistency',
+      label: '일관성',
+      score: metrics.consistency,
+      summary: summarizeMetric('consistency', metrics.consistency),
+      signals: [
+        createMetricSignal(
+          signals.hasLint ? 'positive' : 'warning',
+          'Lint 규칙',
+          signals.hasLint ? 'lint 설정 또는 lint 스크립트를 감지했습니다.' : '정적 스타일 검증 신호가 없어 코드 스타일 편차가 커질 수 있습니다.',
+        ),
+        createMetricSignal(
+          signals.hasWorkflowLint || signals.hasWorkflowTypecheck ? 'positive' : 'neutral',
+          '자동 검증',
+          signals.hasWorkflowLint || signals.hasWorkflowTypecheck
+            ? 'lint 또는 typecheck가 워크플로에 연결돼 있습니다.'
+            : '규칙이 있어도 자동 검증 연결은 더 보강할 수 있습니다.',
+        ),
+        createMetricSignal(
+          signals.hasTypedLanguage ? 'positive' : 'neutral',
+          '타입 시스템',
+          signals.hasTypedLanguage ? '타입 기반 언어 또는 설정이 있어 일관성 유지에 유리합니다.' : '동적 언어 비중이 높아 별도 규칙 관리가 더 중요합니다.',
+        ),
+      ],
+    },
+    {
+      metric: 'modernity',
+      label: '현대성',
+      score: metrics.modernity,
+      summary: summarizeMetric('modernity', metrics.modernity),
+      signals: [
+        createMetricSignal(
+          signals.hasTypedLanguage ? 'positive' : 'neutral',
+          '현대 스택',
+          signals.hasTypedLanguage
+            ? `${signals.mainLanguages.map((language) => language.name).join(', ')} 기반 스택을 감지했습니다.`
+            : '현대 개발 도구 신호는 있으나 타입 기반 스택 근거는 제한적입니다.',
+        ),
+        createMetricSignal(
+          signals.hasWorkflowDeploy ? 'positive' : 'neutral',
+          '배포 자동화',
+          signals.hasWorkflowDeploy ? '배포 또는 릴리스 워크플로가 연결돼 있습니다.' : '배포 자동화 신호는 아직 드러나지 않습니다.',
+        ),
+        createMetricSignal(
+          signals.daysSinceLastPush <= 14 ? 'positive' : signals.daysSinceLastPush <= 45 ? 'neutral' : 'warning',
+          '최근성',
+          `${signals.daysSinceLastPush}일 전까지 업데이트된 저장소입니다.`,
+        ),
+      ],
+    },
+  ]
+}
+
+function summarizeMetric(metric: MetricBreakdown['metric'], score: number) {
+  const level = score >= 85 ? 'strong' : score >= 70 ? 'steady' : 'thin'
+
+  const copy: Record<
+    MetricBreakdown['metric'],
+    Record<'strong' | 'steady' | 'thin', string>
+  > = {
+    readability: {
+      strong: '문서와 커밋 설명이 비교적 분명해 저장소 진입 장벽이 낮습니다.',
+      steady: '기본 설명은 갖춰졌지만 협업 문서와 구조 설명이 더해지면 해석이 쉬워집니다.',
+      thin: '설명형 문서와 커밋 근거가 얇아 코드 의도를 읽는 비용이 큽니다.',
+    },
+    efficiency: {
+      strong: '빌드와 검증 흐름이 자동화되어 반복 작업 비용을 잘 줄이고 있습니다.',
+      steady: '핵심 자동화는 보이지만 build, test, lint 연결을 더 촘촘히 만들 여지가 있습니다.',
+      thin: '재현 가능한 빌드·검증 루프 신호가 약해 실무형 생산성 근거가 제한적입니다.',
+    },
+    security: {
+      strong: '의존성 고정과 검증 신호가 있어 기본 보안 위생이 잘 갖춰져 있습니다.',
+      steady: '보안 기본기는 보이지만 정책 문서나 스캔 자동화가 더해지면 신뢰도가 높아집니다.',
+      thin: '보안 정책과 자동 스캔 근거가 적어 리스크를 조기에 드러내기 어렵습니다.',
+    },
+    architecture: {
+      strong: '소스 구조와 운영 신호가 함께 보여 구조적 의도가 비교적 선명합니다.',
+      steady: '구조는 잡혀 있지만 실행 패키징이나 모듈 역할 분담 신호를 더 보강할 수 있습니다.',
+      thin: '디렉터리 구조와 운영 준비 신호가 얇아 아키텍처 설명력이 부족합니다.',
+    },
+    consistency: {
+      strong: '정적 규칙과 자동 검증이 연결돼 코드 일관성을 유지하기 좋은 상태입니다.',
+      steady: '기본 규칙은 있으나 lint, typecheck, CI를 더 강하게 묶으면 흔들림이 줄어듭니다.',
+      thin: '규칙 자동화 근거가 적어 팀 규모가 커질수록 편차가 늘어날 수 있습니다.',
+    },
+    modernity: {
+      strong: '현대 스택과 최근 운영 방식 신호가 함께 보여 기술 최신성이 잘 드러납니다.',
+      steady: '기술 선택은 무난하지만 배포 자동화나 최신 운영 도구 근거를 더 쌓을 수 있습니다.',
+      thin: '최근성이나 현대적 도구 사용 신호가 약해 현재성 판단 근거가 제한적입니다.',
+    },
+  }
+
+  return copy[metric][level]
+}
+
+function createMetricSignal(
+  status: 'positive' | 'warning' | 'neutral',
+  label: string,
+  detail: string,
+) {
+  return {
+    status,
+    label,
+    detail,
   }
 }
 
@@ -991,6 +1639,18 @@ function estimateDailyLines(repoSizeInKb: number, recentCommitCount: number, day
     Math.round(repoSizeInKb * 0.18 + recentCommitCount * 28 + Math.max(0, 20 - daysSinceLastPush) * 6),
     40,
     1200,
+  )
+}
+
+function calculateCleanCodeScore(metrics: DevMetric) {
+  return Math.round(
+    (metrics.readability +
+      metrics.architecture +
+      metrics.consistency +
+      metrics.modernity +
+      metrics.security +
+      metrics.efficiency) /
+      6,
   )
 }
 

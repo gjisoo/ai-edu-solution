@@ -13,6 +13,7 @@ import type {
 export interface RepositoryAIEnhancement {
   model: string
   focusArea: string
+  metrics: DevMetric
   aiInsight: AIInsight
   reviewSuggestions: Array<Pick<ReviewSuggestion, 'title' | 'impact' | 'description'>>
   conceptGaps: Array<Pick<ConceptGap, 'title' | 'category' | 'severity' | 'summary' | 'recommendation'>>
@@ -43,6 +44,12 @@ type RepositoryAIInput = {
     message: string
     author: string | null
     date: string | null
+  }>
+  codeSamples: Array<{
+    path: string
+    language: string
+    snippet: string
+    truncated: boolean
   }>
 }
 
@@ -76,11 +83,54 @@ const GEMINI_MAX_GENERATION_ATTEMPTS = 2
 const AI_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['focusArea', 'aiInsight', 'reviewSuggestions', 'conceptGaps'],
+  required: ['focusArea', 'metrics', 'aiInsight', 'reviewSuggestions', 'conceptGaps'],
   properties: {
     focusArea: {
       type: 'string',
       description: 'The main Korean focus area for this repository analysis.',
+    },
+    metrics: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['readability', 'efficiency', 'security', 'architecture', 'consistency', 'modernity'],
+      properties: {
+        readability: {
+          type: 'number',
+          minimum: 0,
+          maximum: 100,
+          description: 'AI-scored readability from 0 to 100.',
+        },
+        efficiency: {
+          type: 'number',
+          minimum: 0,
+          maximum: 100,
+          description: 'AI-scored efficiency from 0 to 100.',
+        },
+        security: {
+          type: 'number',
+          minimum: 0,
+          maximum: 100,
+          description: 'AI-scored security from 0 to 100.',
+        },
+        architecture: {
+          type: 'number',
+          minimum: 0,
+          maximum: 100,
+          description: 'AI-scored architecture from 0 to 100.',
+        },
+        consistency: {
+          type: 'number',
+          minimum: 0,
+          maximum: 100,
+          description: 'AI-scored consistency from 0 to 100.',
+        },
+        modernity: {
+          type: 'number',
+          minimum: 0,
+          maximum: 100,
+          description: 'AI-scored modernity from 0 to 100.',
+        },
+      },
     },
     aiInsight: {
       type: 'object',
@@ -303,8 +353,12 @@ function buildGeminiPrompt(input: RepositoryAIInput) {
   return [
     'You are Dev-Radar, an engineering portfolio analyst.',
     'Base every claim strictly on the repository evidence provided in the JSON payload.',
+    'Review only the sampled files and repository metadata that appear in the payload.',
     'Do not invent files, practices, tests, deployment setup, or team process that are not supported by evidence.',
     'Keep every field concise, concrete, and suitable for direct dashboard display.',
+    'Score readability, efficiency, security, architecture, consistency, and modernity on a 0-100 scale.',
+    'Use code-level evidence such as naming, function boundaries, error handling, module separation, validation, and tooling when samples are available.',
+    'If the code sample coverage is thin or truncated, stay close to the heuristic draft and acknowledge limited evidence.',
     'When evidence is limited, acknowledge thin signal instead of overstating confidence.',
     'Write every output string in natural Korean.',
     'Return only valid JSON that matches the provided schema.',
@@ -334,7 +388,9 @@ function buildPromptPayload(input: RepositoryAIInput) {
     marketFits: input.marketFits,
     repositorySignals: input.repositorySignals,
     recentCommits: input.recentCommits,
+    codeSamples: input.codeSamples,
     heuristicDraft: {
+      metrics: input.metrics,
       focusArea: deriveDraftFocusArea(input.metrics),
       reviewSuggestions: input.reviewSuggestions.map(({ title, impact, description }) => ({
         title,
@@ -385,6 +441,7 @@ function parseAIEnhancement(rawText: string, model: string): RepositoryAIEnhance
   return {
     model,
     focusArea: parsed.focusArea.trim(),
+    metrics: normalizeMetrics(parsed.metrics),
     aiInsight: {
       headline: parsed.aiInsight.headline.trim(),
       summary: parsed.aiInsight.summary.trim(),
@@ -408,6 +465,7 @@ function parseAIEnhancement(rawText: string, model: string): RepositoryAIEnhance
 
 function isAIEnhancementShape(value: unknown): value is {
   focusArea: string
+  metrics: DevMetric
   aiInsight: {
     headline: string
     summary: string
@@ -433,6 +491,7 @@ function isAIEnhancementShape(value: unknown): value is {
 
   if (
     typeof value.focusArea !== 'string' ||
+    !isDevMetric(value.metrics) ||
     !isRecord(value.aiInsight) ||
     typeof value.aiInsight.headline !== 'string' ||
     typeof value.aiInsight.summary !== 'string' ||
@@ -471,8 +530,42 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
+function isDevMetric(value: unknown): value is DevMetric {
+  if (!isRecord(value)) {
+    return false
+  }
+
+  return (
+    isMetricValue(value.readability) &&
+    isMetricValue(value.efficiency) &&
+    isMetricValue(value.security) &&
+    isMetricValue(value.architecture) &&
+    isMetricValue(value.consistency) &&
+    isMetricValue(value.modernity)
+  )
+}
+
+function isMetricValue(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
 function isSeverity(value: unknown): value is ConceptGap['severity'] {
   return value === 'high' || value === 'medium' || value === 'low'
+}
+
+function normalizeMetrics(metrics: DevMetric): DevMetric {
+  return {
+    readability: clampMetric(metrics.readability),
+    efficiency: clampMetric(metrics.efficiency),
+    security: clampMetric(metrics.security),
+    architecture: clampMetric(metrics.architecture),
+    consistency: clampMetric(metrics.consistency),
+    modernity: clampMetric(metrics.modernity),
+  }
+}
+
+function clampMetric(value: number) {
+  return Math.min(100, Math.max(0, Math.round(value)))
 }
 
 function sleep(ms: number) {

@@ -7,6 +7,22 @@ export interface DevMetric {
   modernity: number
 }
 
+export type MetricKey = keyof DevMetric
+
+export interface MetricSignal {
+  label: string
+  detail: string
+  status: 'positive' | 'warning' | 'neutral'
+}
+
+export interface MetricBreakdown {
+  metric: MetricKey
+  label: string
+  score: number
+  summary: string
+  signals: MetricSignal[]
+}
+
 export interface MarketFit {
   targetJob: string
   similarityScore: number
@@ -87,4 +103,5 @@ export interface DashboardAnalysis {
   conceptGaps: ConceptGap[]
   reviewSuggestions: ReviewSuggestion[]
   activity: ActivityEvent[]
+  metricBreakdown?: MetricBreakdown[]
 }
