@@ -23,6 +23,38 @@ export interface MetricBreakdown {
   signals: MetricSignal[]
 }
 
+export interface StaticAnalysisRuleScore {
+  key:
+    | 'naming'
+    | 'singleResponsibility'
+    | 'complexity'
+    | 'errorHandling'
+    | 'validation'
+    | 'modularity'
+  label: string
+  score: number
+  weight: number
+  evidence: string
+}
+
+export interface StaticAnalysisFinding {
+  id: string
+  title: string
+  detail: string
+  severity: 'high' | 'medium' | 'low'
+  path: string
+}
+
+export interface StaticCodeAnalysis {
+  analyzer: string
+  sampledFiles: number
+  analyzableFiles: number
+  averageScore: number
+  coverageSummary: string
+  rules: StaticAnalysisRuleScore[]
+  findings: StaticAnalysisFinding[]
+}
+
 export interface MarketFit {
   targetJob: string
   similarityScore: number
@@ -104,4 +136,5 @@ export interface DashboardAnalysis {
   reviewSuggestions: ReviewSuggestion[]
   activity: ActivityEvent[]
   metricBreakdown?: MetricBreakdown[]
+  staticAnalysis?: StaticCodeAnalysis | null
 }

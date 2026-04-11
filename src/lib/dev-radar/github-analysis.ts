@@ -1,6 +1,7 @@
 import 'server-only'
 
 import { generateRepositoryAIEnhancement } from '@/lib/dev-radar/gemini-analysis'
+import { analyzeRepositoryStaticCode } from '@/lib/dev-radar/static-code-analysis'
 import { parseGitHubRepositoryInput } from '@/lib/github/parse-repo-input'
 import type {
   ActivityEvent,
@@ -11,6 +12,8 @@ import type {
   MetricBreakdown,
   RepositoryLanguage,
   ReviewSuggestion,
+  StaticCodeAnalysis,
+  StaticAnalysisRuleScore,
 } from '@/types/dev-radar'
 
 const GITHUB_API_BASE = 'https://api.github.com'
@@ -211,6 +214,7 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
   ])
   const packageManifest = parsePackageManifest(rootFileContents['package.json'] ?? null)
   const packageScripts = extractPackageScripts(packageManifest)
+  const staticAnalysis = analyzeRepositoryStaticCode(codeSamples)
   const frameworks = detectFrameworks({
     languages,
     packageManifest,
@@ -227,8 +231,8 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
     workflowSignals,
     codeSampleCount: codeSamples.length,
   })
-  const metrics = buildMetrics(repositorySignals)
-  const metricBreakdown = buildMetricBreakdown(metrics, repositorySignals)
+  const metrics = buildMetrics(repositorySignals, staticAnalysis)
+  const metricBreakdown = buildMetricBreakdown(metrics, repositorySignals, staticAnalysis)
   const marketFits = buildMarketFits(repositorySignals)
   const reviewSuggestions = buildReviewSuggestions(repositorySignals)
   const conceptGaps = buildConceptGaps(repositorySignals)
@@ -264,6 +268,7 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
     focusArea: describeWeakestMetric(metrics),
     metrics,
     metricBreakdown,
+    staticAnalysis,
     marketFits,
     conceptGaps,
     reviewSuggestions,
@@ -297,6 +302,7 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
       date: commit.commit.author?.date ?? null,
     })),
     codeSamples,
+    staticAnalysis,
   })
 
   if (!aiEnhancement) {
@@ -314,7 +320,12 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
     aiInsight: aiEnhancement.aiInsight,
     focusArea: aiEnhancement.focusArea,
     metrics: aiEnhancement.metrics,
-    metricBreakdown: buildMetricBreakdown(aiEnhancement.metrics, repositorySignals),
+    metricBreakdown: buildMetricBreakdown(
+      aiEnhancement.metrics,
+      repositorySignals,
+      staticAnalysis,
+    ),
+    staticAnalysis,
     reviewSuggestions: aiEnhancement.reviewSuggestions.map((item, index) => ({
       id: `ai-review-${index + 1}`,
       title: item.title,
@@ -1016,8 +1027,11 @@ function buildRepositorySignals({
   }
 }
 
-function buildMetrics(signals: ReturnType<typeof buildRepositorySignals>): DevMetric {
-  return {
+function buildMetrics(
+  signals: ReturnType<typeof buildRepositorySignals>,
+  staticAnalysis: StaticCodeAnalysis | null,
+): DevMetric {
+  const baseMetrics: DevMetric = {
     readability: clamp(
       38 +
         (signals.hasReadme ? 15 : 0) +
@@ -1095,11 +1109,14 @@ function buildMetrics(signals: ReturnType<typeof buildRepositorySignals>): DevMe
       100,
     ),
   }
+
+  return blendMetricsWithStaticAnalysis(baseMetrics, staticAnalysis)
 }
 
 function buildMetricBreakdown(
   metrics: DevMetric,
   signals: ReturnType<typeof buildRepositorySignals>,
+  _staticAnalysis: StaticCodeAnalysis | null,
 ): MetricBreakdown[] {
   return [
     {
@@ -1642,6 +1659,48 @@ function estimateDailyLines(repoSizeInKb: number, recentCommitCount: number, day
   )
 }
 
+function blendMetricsWithStaticAnalysis(
+  metrics: DevMetric,
+  staticAnalysis: StaticCodeAnalysis | null,
+): DevMetric {
+  if (!staticAnalysis || staticAnalysis.analyzableFiles === 0) {
+    return metrics
+  }
+
+  return {
+    readability: blendMetricScore(
+      metrics.readability,
+      averageStaticRuleScores(staticAnalysis, ['naming', 'modularity']),
+      0.28,
+    ),
+    efficiency: blendMetricScore(
+      metrics.efficiency,
+      averageStaticRuleScores(staticAnalysis, ['singleResponsibility', 'complexity']),
+      0.26,
+    ),
+    security: blendMetricScore(
+      metrics.security,
+      averageStaticRuleScores(staticAnalysis, ['errorHandling', 'validation']),
+      0.24,
+    ),
+    architecture: blendMetricScore(
+      metrics.architecture,
+      averageStaticRuleScores(staticAnalysis, ['singleResponsibility', 'modularity']),
+      0.3,
+    ),
+    consistency: blendMetricScore(
+      metrics.consistency,
+      averageStaticRuleScores(staticAnalysis, ['naming', 'singleResponsibility', 'complexity']),
+      0.3,
+    ),
+    modernity: blendMetricScore(
+      metrics.modernity,
+      averageStaticRuleScores(staticAnalysis, ['modularity', 'validation']),
+      0.16,
+    ),
+  }
+}
+
 function calculateCleanCodeScore(metrics: DevMetric) {
   return Math.round(
     (metrics.readability +
@@ -1651,6 +1710,29 @@ function calculateCleanCodeScore(metrics: DevMetric) {
       metrics.security +
       metrics.efficiency) /
       6,
+  )
+}
+
+function averageStaticRuleScores(
+  staticAnalysis: StaticCodeAnalysis,
+  keys: StaticAnalysisRuleScore['key'][],
+) {
+  const scores = keys
+    .map((key) => staticAnalysis.rules.find((rule) => rule.key === key)?.score)
+    .filter((value): value is number => typeof value === 'number')
+
+  if (scores.length === 0) {
+    return 0
+  }
+
+  return Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length)
+}
+
+function blendMetricScore(baseScore: number, staticScore: number, staticWeight: number) {
+  return clamp(
+    Math.round(baseScore * (1 - staticWeight) + staticScore * staticWeight),
+    0,
+    100,
   )
 }
 

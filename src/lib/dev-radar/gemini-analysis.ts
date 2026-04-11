@@ -8,6 +8,7 @@ import type {
   MarketFit,
   RepositorySummary,
   ReviewSuggestion,
+  StaticCodeAnalysis,
 } from '@/types/dev-radar'
 
 export interface RepositoryAIEnhancement {
@@ -51,6 +52,7 @@ type RepositoryAIInput = {
     snippet: string
     truncated: boolean
   }>
+  staticAnalysis: StaticCodeAnalysis | null
 }
 
 type GeminiGenerateContentResponse = {
@@ -358,6 +360,7 @@ function buildGeminiPrompt(input: RepositoryAIInput) {
     'Keep every field concise, concrete, and suitable for direct dashboard display.',
     'Score readability, efficiency, security, architecture, consistency, and modernity on a 0-100 scale.',
     'Use code-level evidence such as naming, function boundaries, error handling, module separation, validation, and tooling when samples are available.',
+    'Use the provided static analysis scores as grounded evidence for naming, single responsibility, complexity, validation, and error handling claims.',
     'If the code sample coverage is thin or truncated, stay close to the heuristic draft and acknowledge limited evidence.',
     'When evidence is limited, acknowledge thin signal instead of overstating confidence.',
     'Write every output string in natural Korean.',
@@ -389,6 +392,7 @@ function buildPromptPayload(input: RepositoryAIInput) {
     repositorySignals: input.repositorySignals,
     recentCommits: input.recentCommits,
     codeSamples: input.codeSamples,
+    staticAnalysis: input.staticAnalysis,
     heuristicDraft: {
       metrics: input.metrics,
       focusArea: deriveDraftFocusArea(input.metrics),

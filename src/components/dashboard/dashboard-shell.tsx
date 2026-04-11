@@ -21,6 +21,7 @@ import type { DashboardAnalysis } from '@/types/dev-radar'
 import { MetricBreakdownGrid } from '@/components/dashboard/metric-breakdown-grid'
 import { DashboardSkeleton } from '@/components/dashboard/dashboard-skeleton'
 import { RadarMetricChart } from '@/components/dashboard/radar-metric-chart'
+import { StaticAnalysisCard } from '@/components/dashboard/static-analysis-card'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -357,6 +358,24 @@ export function DashboardShell() {
               </Card>
 
               <div className="grid gap-6">
+                <Card className="border-white/70 bg-white/80 shadow-[0_24px_56px_rgba(235,193,166,0.16)]">
+                  <CardHeader>
+                    <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.2em] text-[#5f8ae8]">
+                      <Sparkles className="h-4 w-4" />
+                      Static Analysis
+                    </div>
+                    <CardTitle className="text-2xl text-slate-800">
+                      LLM 이전에 보는 코드 구조 신호
+                    </CardTitle>
+                    <CardDescription className="text-sm leading-6 text-slate-600">
+                      샘플 코드에서 네이밍, 함수 크기, 분기 복잡도, 입력 검증, 에러 처리 같은 신호를 먼저 계산합니다.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <StaticAnalysisCard staticAnalysis={analysis.staticAnalysis} />
+                  </CardContent>
+                </Card>
+
                 <Card className="border-white/70 bg-white/80 shadow-[0_24px_56px_rgba(235,193,166,0.16)]">
                   <CardHeader>
                     <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.2em] text-[#7d6fff]">
