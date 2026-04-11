@@ -93,8 +93,8 @@ const CODE_FILE_LANGUAGES: Record<string, string> = {
   '.php': 'PHP',
 }
 const MAX_CODE_SAMPLE_DEPTH = 3
-const MAX_CODE_SAMPLE_FILES = 6
-const MAX_CODE_SAMPLE_CANDIDATES = 18
+const MAX_CODE_SAMPLE_FILES = 8
+const MAX_CODE_SAMPLE_CANDIDATES = 24
 const MAX_DIRECTORY_FANOUT = 8
 const MAX_ROOT_DIRECTORIES = 10
 const MAX_CODE_SAMPLE_LINES = 90
@@ -147,6 +147,14 @@ type GitHubFileResponse = {
   type: 'file'
   content?: string
   encoding?: string
+}
+
+type GitHubTreeResponse = {
+  truncated?: boolean
+  tree?: Array<{
+    path: string
+    type: 'blob' | 'tree'
+  }>
 }
 
 type PackageManifest = {
@@ -209,7 +217,7 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
   const rootContents = Array.isArray(rootContentsRaw) ? rootContentsRaw : []
   const [rootFileContents, codeSamples, workflowSignals] = await Promise.all([
     loadRootFileContents(repositoryPath, rootContents),
-    loadRepositoryCodeSamples(repositoryPath, rootContents),
+    loadRepositoryCodeSamples(repositoryPath, repository.default_branch, rootContents),
     loadWorkflowSignals(repositoryPath, rootContents),
   ])
   const packageManifest = parsePackageManifest(rootFileContents['package.json'] ?? null)
@@ -394,8 +402,61 @@ async function loadWorkflowSignals(
 
 async function loadRepositoryCodeSamples(
   repositoryPath: string,
+  defaultBranch: string,
   rootContents: GitHubContentItem[],
 ): Promise<RepositoryCodeSample[]> {
+  const treePaths = await loadRepositoryCodeSamplePathsFromTree(
+    repositoryPath,
+    defaultBranch,
+  )
+  const selectedPaths =
+    treePaths && treePaths.length > 0
+      ? treePaths
+      : await collectRepositoryCodeSamplePathsFromContents(
+          repositoryPath,
+          rootContents,
+        )
+
+  const samples = await Promise.all(
+    selectedPaths.map(async (path) => {
+      const text = await fetchRepositoryFileText(repositoryPath, path)
+      return buildRepositoryCodeSample(path, text)
+    }),
+  )
+
+  return samples.filter((sample): sample is RepositoryCodeSample => Boolean(sample))
+}
+
+async function loadRepositoryCodeSamplePathsFromTree(
+  repositoryPath: string,
+  defaultBranch: string,
+): Promise<string[] | null> {
+  try {
+    const treeResponse = await fetchGitHubJson<GitHubTreeResponse>(
+      `${repositoryPath}/git/trees/${encodeURIComponent(defaultBranch)}?recursive=1`,
+    )
+
+    const treeEntries = treeResponse.tree ?? []
+
+    if (treeEntries.length === 0) {
+      return null
+    }
+
+    return treeEntries
+      .filter((entry) => entry.type === 'blob')
+      .map((entry) => entry.path)
+      .filter((path) => isCodeSampleCandidate(path))
+      .sort(compareFilePriority)
+      .slice(0, MAX_CODE_SAMPLE_FILES)
+  } catch {
+    return null
+  }
+}
+
+async function collectRepositoryCodeSamplePathsFromContents(
+  repositoryPath: string,
+  rootContents: GitHubContentItem[],
+): Promise<string[]> {
   const candidatePaths = new Set<string>()
   const rootDirectories = rootContents
     .filter((item) => item.type === 'dir')
@@ -456,15 +517,9 @@ async function loadRepositoryCodeSamples(
     }
   }
 
-  const selectedPaths = Array.from(candidatePaths).sort(compareFilePriority).slice(0, MAX_CODE_SAMPLE_FILES)
-  const samples = await Promise.all(
-    selectedPaths.map(async (path) => {
-      const text = await fetchRepositoryFileText(repositoryPath, path)
-      return buildRepositoryCodeSample(path, text)
-    }),
-  )
-
-  return samples.filter((sample): sample is RepositoryCodeSample => Boolean(sample))
+  return Array.from(candidatePaths)
+    .sort(compareFilePriority)
+    .slice(0, MAX_CODE_SAMPLE_FILES)
 }
 
 async function fetchRepositoryFileText(

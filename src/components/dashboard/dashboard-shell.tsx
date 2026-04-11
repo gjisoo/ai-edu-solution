@@ -362,7 +362,7 @@ export function DashboardShell() {
                   <CardHeader>
                     <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.2em] text-[#5f8ae8]">
                       <Sparkles className="h-4 w-4" />
-                      Static Analysis
+                      정적 분석
                     </div>
                     <CardTitle className="text-2xl text-slate-800">
                       LLM 이전에 보는 코드 구조 신호

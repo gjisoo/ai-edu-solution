@@ -20,7 +20,7 @@ export function StaticAnalysisCard({
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-xs uppercase tracking-[0.18em] text-slate-400">
-              Static Analysis
+              정적 분석
             </p>
             <p className="mt-2 text-lg font-semibold text-slate-800">
               평균 {staticAnalysis.averageScore}점
@@ -45,7 +45,7 @@ export function StaticAnalysisCard({
               <div>
                 <p className="font-semibold text-slate-800">{rule.label}</p>
                 <p className="mt-1 text-xs text-slate-500">
-                  weight {Math.round(rule.weight * 100)}%
+                  가중치 {Math.round(rule.weight * 100)}%
                 </p>
               </div>
               <span
@@ -85,7 +85,7 @@ export function StaticAnalysisCard({
         <div className="rounded-[24px] border border-[#f3d9cc] bg-[#fff8f2] p-4 shadow-sm">
           <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.18em] text-[#d17b3f]">
             <AlertTriangle className="h-4 w-4" />
-            Static Findings
+            정적 분석 결과
           </div>
           <div className="mt-3 space-y-3">
             {staticAnalysis.findings.map((finding) => (
@@ -95,8 +95,12 @@ export function StaticAnalysisCard({
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="font-semibold text-slate-800">{finding.title}</p>
-                    <p className="mt-1 text-xs text-slate-500">{finding.path}</p>
+                    <p className="font-semibold text-slate-800">
+                      {finding.title}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {finding.path}
+                    </p>
                   </div>
                   <span
                     className={cn(
@@ -109,7 +113,7 @@ export function StaticAnalysisCard({
                         'bg-emerald-50 text-emerald-600',
                     )}
                   >
-                    {finding.severity}
+                    {formatSeverityLabel(finding.severity)}
                   </span>
                 </div>
                 <p className="mt-2 text-sm leading-6 text-slate-600">
@@ -122,4 +126,18 @@ export function StaticAnalysisCard({
       ) : null}
     </div>
   )
+}
+
+function formatSeverityLabel(
+  severity: StaticCodeAnalysis['findings'][number]['severity'],
+) {
+  if (severity === 'high') {
+    return '높음'
+  }
+
+  if (severity === 'medium') {
+    return '중간'
+  }
+
+  return '낮음'
 }

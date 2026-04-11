@@ -1,5 +1,7 @@
 import 'server-only'
 
+import { Linter } from 'eslint'
+import * as tsEslintParser from '@typescript-eslint/parser'
 import ts from 'typescript'
 
 import type {
@@ -39,6 +41,8 @@ type AggregateStats = {
   functionsWithValidation: number
   importExportRichFiles: number
   largeFileSignals: number
+  eslintMessageCount: number
+  eslintViolationCounts: Record<StaticAnalysisRuleScore['key'], number>
   functions: FunctionStats[]
   findings: StaticAnalysisFinding[]
 }
@@ -71,6 +75,15 @@ const COMMON_SHORT_NAMES = new Set([
   'ctx',
   'e',
 ])
+const ESLINT_RULE_MAP: Record<StaticAnalysisRuleScore['key'], string[]> = {
+  naming: ['camelcase'],
+  singleResponsibility: ['max-lines-per-function', 'max-params'],
+  complexity: ['complexity', 'max-depth'],
+  errorHandling: ['no-empty', 'no-useless-catch'],
+  validation: [],
+  modularity: ['max-lines', 'no-duplicate-imports'],
+}
+const lintEngine = new Linter({ configType: 'flat' })
 
 export function analyzeRepositoryStaticCode(
   codeSamples: RepositoryCodeSample[],
@@ -92,6 +105,15 @@ export function analyzeRepositoryStaticCode(
     functionsWithValidation: 0,
     importExportRichFiles: 0,
     largeFileSignals: 0,
+    eslintMessageCount: 0,
+    eslintViolationCounts: {
+      naming: 0,
+      singleResponsibility: 0,
+      complexity: 0,
+      errorHandling: 0,
+      validation: 0,
+      modularity: 0,
+    },
     functions: [],
     findings: [],
   }
@@ -107,7 +129,7 @@ export function analyzeRepositoryStaticCode(
 
   if (aggregate.analyzableFiles === 0) {
     return {
-      analyzer: 'typescript-ast-heuristic-v1',
+      analyzer: 'typescript-ast-heuristic-v1 + eslint-v8',
       sampledFiles: codeSamples.length,
       analyzableFiles: 0,
       averageScore: 0,
@@ -131,11 +153,11 @@ export function analyzeRepositoryStaticCode(
   )
 
   return {
-    analyzer: 'typescript-ast-heuristic-v1',
+    analyzer: 'typescript-ast-heuristic-v1 + eslint-v8',
     sampledFiles: codeSamples.length,
     analyzableFiles: aggregate.analyzableFiles,
     averageScore,
-    coverageSummary: `${aggregate.analyzableFiles}/${codeSamples.length} sampled files were statically analyzed.`,
+    coverageSummary: `${aggregate.analyzableFiles}/${codeSamples.length} sampled files were statically analyzed and ${aggregate.eslintMessageCount} ESLint messages were collected.`,
     rules: ruleScores,
     findings: aggregate.findings.slice(0, 5),
   }
@@ -170,6 +192,29 @@ function analyzeTypeScriptLikeSample(
 
   if (importCount + exportCount >= 3) {
     aggregate.importExportRichFiles += 1
+  }
+
+  const eslintMessages = lintSampleWithEslint(sample)
+  aggregate.eslintMessageCount += eslintMessages.length
+
+  for (const message of eslintMessages) {
+    const mappedRule = mapLintRuleToStaticRule(message.ruleId)
+
+    if (mappedRule) {
+      aggregate.eslintViolationCounts[mappedRule] += 1
+    }
+
+    if (aggregate.findings.length >= 8 || !message.ruleId) {
+      continue
+    }
+
+    aggregate.findings.push({
+      id: `${sample.path}-eslint-${message.line}-${message.column}-${message.ruleId}`,
+      title: `ESLint: ${message.ruleId}`,
+      detail: `${message.message} (line ${message.line})`,
+      severity: message.severity === 2 ? 'high' : 'medium',
+      path: sample.path,
+    })
   }
 
   function walk(node: ts.Node, nestingDepth: number) {
@@ -315,7 +360,8 @@ function buildRuleScores(aggregate: AggregateStats): StaticAnalysisRuleScore[] {
   const namingScore = clamp(
     Math.round(
       ratioScore(aggregate.wellNamedIdentifiers, aggregate.identifierTotal, 58) +
-        42,
+        42 -
+        aggregate.eslintViolationCounts.naming * 6,
     ),
     0,
     100,
@@ -324,7 +370,8 @@ function buildRuleScores(aggregate: AggregateStats): StaticAnalysisRuleScore[] {
     Math.round(
       100 -
         ratioPenalty(aggregate.longFunctionCount, aggregate.functionCount, 42) -
-        ratioPenalty(aggregate.parameterHeavyFunctionCount, aggregate.functionCount, 28),
+        ratioPenalty(aggregate.parameterHeavyFunctionCount, aggregate.functionCount, 28) -
+        aggregate.eslintViolationCounts.singleResponsibility * 5,
     ),
     0,
     100,
@@ -333,14 +380,17 @@ function buildRuleScores(aggregate: AggregateStats): StaticAnalysisRuleScore[] {
     Math.round(
       100 -
         ratioPenalty(aggregate.complexFunctionCount, aggregate.functionCount, 44) -
-        ratioPenalty(aggregate.deeplyNestedFunctionCount, aggregate.functionCount, 26),
+        ratioPenalty(aggregate.deeplyNestedFunctionCount, aggregate.functionCount, 26) -
+        aggregate.eslintViolationCounts.complexity * 5,
     ),
     0,
     100,
   )
   const errorHandlingScore = clamp(
     Math.round(
-      52 + ratioScore(aggregate.functionsWithErrorHandling, aggregate.functionCount, 38),
+      52 +
+        ratioScore(aggregate.functionsWithErrorHandling, aggregate.functionCount, 38) -
+        aggregate.eslintViolationCounts.errorHandling * 5,
     ),
     0,
     100,
@@ -356,19 +406,20 @@ function buildRuleScores(aggregate: AggregateStats): StaticAnalysisRuleScore[] {
     Math.round(
       58 +
         ratioScore(aggregate.importExportRichFiles, aggregate.analyzableFiles, 22) -
-        ratioPenalty(aggregate.largeFileSignals, aggregate.analyzableFiles, 16),
+        ratioPenalty(aggregate.largeFileSignals, aggregate.analyzableFiles, 16) -
+        aggregate.eslintViolationCounts.modularity * 4,
     ),
     0,
     100,
   )
 
   const evidenceMap: Record<StaticAnalysisRuleScore['key'], string> = {
-    naming: `${aggregate.wellNamedIdentifiers}/${aggregate.identifierTotal || 0} sampled identifiers matched common naming conventions.`,
-    singleResponsibility: `${aggregate.longFunctionCount} long functions and ${aggregate.parameterHeavyFunctionCount} parameter-heavy functions were detected.`,
-    complexity: `${aggregate.complexFunctionCount} complex functions and ${aggregate.deeplyNestedFunctionCount} deeply nested functions were detected.`,
-    errorHandling: `${aggregate.functionsWithErrorHandling}/${aggregate.functionCount || 0} functions showed explicit error handling signals.`,
+    naming: `${aggregate.wellNamedIdentifiers}/${aggregate.identifierTotal || 0} sampled identifiers matched common naming conventions, with ${aggregate.eslintViolationCounts.naming} ESLint naming violations.`,
+    singleResponsibility: `${aggregate.longFunctionCount} long functions and ${aggregate.parameterHeavyFunctionCount} parameter-heavy functions were detected, plus ${aggregate.eslintViolationCounts.singleResponsibility} ESLint structure violations.`,
+    complexity: `${aggregate.complexFunctionCount} complex functions and ${aggregate.deeplyNestedFunctionCount} deeply nested functions were detected, plus ${aggregate.eslintViolationCounts.complexity} ESLint complexity violations.`,
+    errorHandling: `${aggregate.functionsWithErrorHandling}/${aggregate.functionCount || 0} functions showed explicit error handling signals, with ${aggregate.eslintViolationCounts.errorHandling} ESLint handling violations.`,
     validation: `${aggregate.functionsWithValidation}/${aggregate.functionCount || 0} functions showed input or guard validation signals.`,
-    modularity: `${aggregate.importExportRichFiles}/${aggregate.analyzableFiles} files showed clear import/export structure in sampled code.`,
+    modularity: `${aggregate.importExportRichFiles}/${aggregate.analyzableFiles} files showed clear import/export structure in sampled code, with ${aggregate.eslintViolationCounts.modularity} ESLint modularity violations.`,
   }
 
   const scoreMap: Record<StaticAnalysisRuleScore['key'], number> = {
@@ -385,6 +436,88 @@ function buildRuleScores(aggregate: AggregateStats): StaticAnalysisRuleScore[] {
     score: scoreMap[rule.key],
     evidence: evidenceMap[rule.key],
   }))
+}
+
+function lintSampleWithEslint(
+  sample: RepositoryCodeSample,
+): Linter.LintMessage[] {
+  try {
+    const config = createFlatLintConfig(sample)
+
+    return lintEngine.verify(sample.snippet, config, {
+      filename: sample.path,
+      allowInlineConfig: false,
+    })
+  } catch {
+    return []
+  }
+}
+
+function createFlatLintConfig(sample: RepositoryCodeSample): Linter.Config[] {
+  return [
+    {
+      files: [sample.path],
+      languageOptions: {
+        ecmaVersion: 'latest',
+        sourceType: 'module',
+        parser: tsEslintParser,
+        parserOptions: {
+          ecmaFeatures: {
+            jsx: sample.path.endsWith('.tsx') || sample.path.endsWith('.jsx'),
+          },
+        },
+      },
+      rules: {
+        camelcase: [
+          'warn',
+          {
+            ignoreDestructuring: true,
+            ignoreImports: true,
+            ignoreGlobals: true,
+          },
+        ],
+        'max-lines-per-function': [
+          'warn',
+          {
+            max: 35,
+            skipBlankLines: true,
+            skipComments: true,
+          },
+        ],
+        'max-params': ['warn', 4],
+        complexity: ['warn', 8],
+        'max-depth': ['warn', 3],
+        'no-duplicate-imports': 'warn',
+        'max-lines': [
+          'warn',
+          {
+            max: 120,
+            skipBlankLines: true,
+            skipComments: true,
+          },
+        ],
+        'no-empty': [
+          'warn',
+          {
+            allowEmptyCatch: false,
+          },
+        ],
+        'no-useless-catch': 'warn',
+      },
+    },
+  ]
+}
+
+function mapLintRuleToStaticRule(ruleId: string | null) {
+  if (!ruleId) {
+    return null
+  }
+
+  const match = Object.entries(ESLINT_RULE_MAP).find(([, ruleIds]) =>
+    ruleIds.includes(ruleId),
+  )
+
+  return match?.[0] as StaticAnalysisRuleScore['key'] | undefined
 }
 
 function resolveScriptKind(path: string) {
