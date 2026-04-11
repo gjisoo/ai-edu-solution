@@ -23,36 +23,27 @@ export interface MetricBreakdown {
   signals: MetricSignal[]
 }
 
-export interface StaticAnalysisRuleScore {
-  key:
-    | 'naming'
-    | 'singleResponsibility'
-    | 'complexity'
-    | 'errorHandling'
-    | 'validation'
-    | 'modularity'
+export type CleanCodeCriterionKey =
+  | 'naming'
+  | 'singleResponsibility'
+  | 'complexity'
+  | 'errorHandling'
+  | 'validation'
+  | 'modularity'
+
+export interface CleanCodeCriterion {
+  key: CleanCodeCriterionKey
   label: string
-  score: number
   weight: number
-  evidence: string
+  score: number
+  rationale: string
 }
 
-export interface StaticAnalysisFinding {
-  id: string
-  title: string
-  detail: string
-  severity: 'high' | 'medium' | 'low'
-  path: string
-}
-
-export interface StaticCodeAnalysis {
-  analyzer: string
-  sampledFiles: number
-  analyzableFiles: number
-  averageScore: number
-  coverageSummary: string
-  rules: StaticAnalysisRuleScore[]
-  findings: StaticAnalysisFinding[]
+export interface CleanCodeEvaluation {
+  score: number
+  formula: string
+  summary: string
+  criteria: CleanCodeCriterion[]
 }
 
 export interface MarketFit {
@@ -136,5 +127,5 @@ export interface DashboardAnalysis {
   reviewSuggestions: ReviewSuggestion[]
   activity: ActivityEvent[]
   metricBreakdown?: MetricBreakdown[]
-  staticAnalysis?: StaticCodeAnalysis | null
+  cleanCodeEvaluation?: CleanCodeEvaluation | null
 }

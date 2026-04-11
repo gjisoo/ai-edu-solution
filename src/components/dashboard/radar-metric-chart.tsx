@@ -18,16 +18,12 @@ const labelMap: Array<{
   { key: 'readability', label: '가독성' },
   { key: 'efficiency', label: '효율성' },
   { key: 'security', label: '보안성' },
-  { key: 'architecture', label: '아키텍처' },
+  { key: 'architecture', label: '구조 설계' },
   { key: 'consistency', label: '일관성' },
   { key: 'modernity', label: '현대성' },
 ]
 
-type RadarMetricChartProps = {
-  metrics: DevMetric
-}
-
-export function RadarMetricChart({ metrics }: RadarMetricChartProps) {
+export function RadarMetricChart({ metrics }: { metrics: DevMetric }) {
   const chartData = labelMap.map((item) => ({
     subject: item.label,
     score: metrics[item.key],
@@ -35,9 +31,9 @@ export function RadarMetricChart({ metrics }: RadarMetricChartProps) {
   }))
 
   return (
-    <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(320px,0.95fr)_minmax(0,1.05fr)]">
-      <div className="min-w-0 rounded-[28px] border border-[#eadfdb] bg-white/80 p-3 shadow-[0_16px_34px_rgba(235,193,166,0.14)]">
-        <ResponsiveContainer width="100%" height={320} minWidth={280}>
+    <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(280px,0.92fr)_minmax(0,1.08fr)]">
+      <div className="min-w-0 rounded-[28px] border border-[#eadfdb] bg-white/90 p-3 shadow-[0_16px_34px_rgba(235,193,166,0.14)]">
+        <ResponsiveContainer width="100%" height={320} minWidth={260}>
           <RadarChart data={chartData} outerRadius="76%">
             <PolarGrid stroke="rgba(188, 170, 153, 0.55)" />
             <PolarAngleAxis
@@ -67,17 +63,19 @@ export function RadarMetricChart({ metrics }: RadarMetricChartProps) {
         {chartData.map((item) => (
           <article
             key={item.subject}
-            className="rounded-2xl border border-[#eadfdb] bg-white/82 p-4 shadow-[0_14px_30px_rgba(235,193,166,0.12)]"
+            className="rounded-2xl border border-[#eadfdb] bg-white/90 p-4 shadow-[0_14px_30px_rgba(235,193,166,0.12)]"
           >
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-medium text-slate-500">{item.subject}</p>
+                <p className="text-sm font-medium text-slate-500">
+                  {item.subject}
+                </p>
                 <strong className="mt-2 block text-2xl font-black tracking-tight text-slate-800">
-                  {item.score}%
+                  {item.score}점
                 </strong>
               </div>
               <span className="rounded-full bg-[#f4efff] px-3 py-1 text-xs font-semibold text-[#7f70eb]">
-                실시간 지표
+                현재 점수
               </span>
             </div>
             <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-[#f3e8e2]">

@@ -23,8 +23,12 @@ export function MetricBreakdownGrid({
         >
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-xs uppercase tracking-[0.18em] text-slate-400">평가 근거</p>
-              <h3 className="mt-2 text-lg font-semibold text-slate-800">{item.label}</h3>
+              <p className="text-xs uppercase tracking-[0.18em] text-slate-400">
+                평가 근거
+              </p>
+              <h3 className="mt-2 text-lg font-semibold text-slate-800">
+                {item.label}
+              </h3>
             </div>
             <span className="rounded-full bg-[#f4efff] px-3 py-1 text-sm font-semibold text-[#7163ea]">
               {item.score}점
@@ -39,9 +43,12 @@ export function MetricBreakdownGrid({
                 key={`${item.metric}-${signal.label}`}
                 className={cn(
                   'flex items-start gap-2 rounded-2xl border px-3 py-2 text-sm',
-                  signal.status === 'positive' && 'border-emerald-100 bg-emerald-50/80 text-emerald-700',
-                  signal.status === 'warning' && 'border-amber-100 bg-amber-50/80 text-amber-700',
-                  signal.status === 'neutral' && 'border-slate-200 bg-slate-50 text-slate-600',
+                  signal.status === 'positive' &&
+                    'border-emerald-100 bg-emerald-50/80 text-emerald-700',
+                  signal.status === 'warning' &&
+                    'border-amber-100 bg-amber-50/80 text-amber-700',
+                  signal.status === 'neutral' &&
+                    'border-slate-200 bg-slate-50 text-slate-600',
                 )}
               >
                 <SignalStatusIcon status={signal.status} />

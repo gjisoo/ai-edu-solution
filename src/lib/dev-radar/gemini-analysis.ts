@@ -3,18 +3,20 @@ import 'server-only'
 import type {
   ActivityEvent,
   AIInsight,
+  CleanCodeEvaluation,
+  CleanCodeCriterionKey,
   ConceptGap,
   DevMetric,
   MarketFit,
   RepositorySummary,
   ReviewSuggestion,
-  StaticCodeAnalysis,
 } from '@/types/dev-radar'
 
 export interface RepositoryAIEnhancement {
   model: string
   focusArea: string
   metrics: DevMetric
+  cleanCodeEvaluation: CleanCodeEvaluation
   aiInsight: AIInsight
   reviewSuggestions: Array<Pick<ReviewSuggestion, 'title' | 'impact' | 'description'>>
   conceptGaps: Array<Pick<ConceptGap, 'title' | 'category' | 'severity' | 'summary' | 'recommendation'>>
@@ -52,7 +54,6 @@ type RepositoryAIInput = {
     snippet: string
     truncated: boolean
   }>
-  staticAnalysis: StaticCodeAnalysis | null
 }
 
 type GeminiGenerateContentResponse = {
@@ -82,10 +83,29 @@ const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash'
 const GEMINI_RETRYABLE_STATUS_CODES = new Set([429, 500, 503])
 const GEMINI_MAX_ATTEMPTS = 3
 const GEMINI_MAX_GENERATION_ATTEMPTS = 2
+const CLEAN_CODE_CRITERIA: Array<{
+  key: CleanCodeCriterionKey
+  label: string
+  weight: number
+}> = [
+  { key: 'naming', label: '네이밍', weight: 0.2 },
+  { key: 'singleResponsibility', label: '단일 책임', weight: 0.2 },
+  { key: 'complexity', label: '복잡도', weight: 0.16 },
+  { key: 'errorHandling', label: '에러 처리', weight: 0.15 },
+  { key: 'validation', label: '입력 검증', weight: 0.14 },
+  { key: 'modularity', label: '모듈화', weight: 0.15 },
+]
 const AI_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['focusArea', 'metrics', 'aiInsight', 'reviewSuggestions', 'conceptGaps'],
+  required: [
+    'focusArea',
+    'metrics',
+    'cleanCodeEvaluation',
+    'aiInsight',
+    'reviewSuggestions',
+    'conceptGaps',
+  ],
   properties: {
     focusArea: {
       type: 'string',
@@ -131,6 +151,42 @@ const AI_SCHEMA = {
           minimum: 0,
           maximum: 100,
           description: 'AI-scored modernity from 0 to 100.',
+        },
+      },
+    },
+    cleanCodeEvaluation: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['summary', 'criteria'],
+      properties: {
+        summary: {
+          type: 'string',
+          description: 'A concise Korean summary of the repository clean-code quality.',
+        },
+        criteria: {
+          type: 'array',
+          minItems: 6,
+          maxItems: 6,
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['key', 'score', 'rationale'],
+            properties: {
+              key: {
+                type: 'string',
+                enum: CLEAN_CODE_CRITERIA.map((item) => item.key),
+              },
+              score: {
+                type: 'number',
+                minimum: 0,
+                maximum: 100,
+              },
+              rationale: {
+                type: 'string',
+                description: 'A short Korean rationale grounded in sampled code evidence.',
+              },
+            },
+          },
         },
       },
     },
@@ -359,8 +415,11 @@ function buildGeminiPrompt(input: RepositoryAIInput) {
     'Do not invent files, practices, tests, deployment setup, or team process that are not supported by evidence.',
     'Keep every field concise, concrete, and suitable for direct dashboard display.',
     'Score readability, efficiency, security, architecture, consistency, and modernity on a 0-100 scale.',
-    'Use code-level evidence such as naming, function boundaries, error handling, module separation, validation, and tooling when samples are available.',
-    'Use the provided static analysis scores as grounded evidence for naming, single responsibility, complexity, validation, and error handling claims.',
+    'For cleanCodeEvaluation, judge code quality primarily from the code samples, not from documentation, hiring fit, or repository popularity.',
+    'Use code-level evidence such as identifier clarity, function boundaries, branching complexity, explicit error handling, validation, and module separation when samples are available.',
+    'You must also return cleanCodeEvaluation.criteria for exactly these six rubric keys: naming, singleResponsibility, complexity, errorHandling, validation, modularity.',
+    'Use this rubric: naming evaluates semantic and consistent identifiers; singleResponsibility evaluates whether functions do one job with reasonable arguments; complexity evaluates nested branches and control flow burden; errorHandling evaluates explicit and useful failure handling; validation evaluates guard clauses and input checks; modularity evaluates separation of concerns across files and modules.',
+    'If evidence for one rubric item is thin, lower confidence and keep the rationale explicit about limited sample coverage.',
     'If the code sample coverage is thin or truncated, stay close to the heuristic draft and acknowledge limited evidence.',
     'When evidence is limited, acknowledge thin signal instead of overstating confidence.',
     'Write every output string in natural Korean.',
@@ -392,7 +451,7 @@ function buildPromptPayload(input: RepositoryAIInput) {
     repositorySignals: input.repositorySignals,
     recentCommits: input.recentCommits,
     codeSamples: input.codeSamples,
-    staticAnalysis: input.staticAnalysis,
+    cleanCodeRubric: CLEAN_CODE_CRITERIA,
     heuristicDraft: {
       metrics: input.metrics,
       focusArea: deriveDraftFocusArea(input.metrics),
@@ -446,6 +505,7 @@ function parseAIEnhancement(rawText: string, model: string): RepositoryAIEnhance
     model,
     focusArea: parsed.focusArea.trim(),
     metrics: normalizeMetrics(parsed.metrics),
+    cleanCodeEvaluation: normalizeCleanCodeEvaluation(parsed.cleanCodeEvaluation),
     aiInsight: {
       headline: parsed.aiInsight.headline.trim(),
       summary: parsed.aiInsight.summary.trim(),
@@ -470,6 +530,14 @@ function parseAIEnhancement(rawText: string, model: string): RepositoryAIEnhance
 function isAIEnhancementShape(value: unknown): value is {
   focusArea: string
   metrics: DevMetric
+  cleanCodeEvaluation: {
+    summary: string
+    criteria: Array<{
+      key: CleanCodeCriterionKey
+      score: number
+      rationale: string
+    }>
+  }
   aiInsight: {
     headline: string
     summary: string
@@ -496,6 +564,7 @@ function isAIEnhancementShape(value: unknown): value is {
   if (
     typeof value.focusArea !== 'string' ||
     !isDevMetric(value.metrics) ||
+    !isCleanCodeEvaluationShape(value.cleanCodeEvaluation) ||
     !isRecord(value.aiInsight) ||
     typeof value.aiInsight.headline !== 'string' ||
     typeof value.aiInsight.summary !== 'string' ||
@@ -549,8 +618,37 @@ function isDevMetric(value: unknown): value is DevMetric {
   )
 }
 
+function isCleanCodeEvaluationShape(
+  value: unknown,
+): value is {
+  summary: string
+  criteria: Array<{
+    key: CleanCodeCriterionKey
+    score: number
+    rationale: string
+  }>
+} {
+  if (!isRecord(value) || typeof value.summary !== 'string' || !Array.isArray(value.criteria)) {
+    return false
+  }
+
+  return value.criteria.every(
+    (item) =>
+      isRecord(item) &&
+      isCleanCodeCriterionKey(item.key) &&
+      isMetricValue(item.score) &&
+      typeof item.rationale === 'string',
+  )
+}
+
 function isMetricValue(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value)
+}
+
+function isCleanCodeCriterionKey(
+  value: unknown,
+): value is CleanCodeCriterionKey {
+  return CLEAN_CODE_CRITERIA.some((item) => item.key === value)
 }
 
 function isSeverity(value: unknown): value is ConceptGap['severity'] {
@@ -565,6 +663,34 @@ function normalizeMetrics(metrics: DevMetric): DevMetric {
     architecture: clampMetric(metrics.architecture),
     consistency: clampMetric(metrics.consistency),
     modernity: clampMetric(metrics.modernity),
+  }
+}
+
+function normalizeCleanCodeEvaluation(input: {
+  summary: string
+  criteria: Array<{
+    key: CleanCodeCriterionKey
+    score: number
+    rationale: string
+  }>
+}): CleanCodeEvaluation {
+  const criteria = CLEAN_CODE_CRITERIA.map((criterion) => {
+    const matched = input.criteria.find((item) => item.key === criterion.key)
+
+    return {
+      ...criterion,
+      score: clampMetric(matched?.score ?? 0),
+      rationale: matched?.rationale.trim() || '코드 샘플 근거가 부족합니다.',
+    }
+  })
+
+  return {
+    score: clampMetric(
+      criteria.reduce((sum, criterion) => sum + criterion.score * criterion.weight, 0),
+    ),
+    formula: 'Score_clean = Σ w_i × c_i',
+    summary: input.summary.trim(),
+    criteria,
   }
 }
 
