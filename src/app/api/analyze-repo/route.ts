@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server'
 
 import { analyzeGitHubRepository } from '@/lib/dev-radar/github-analysis'
 
+export const maxDuration = 60
+
+
 export async function POST(request: Request) {
   try {
     const payload = (await request.json()) as { repo?: string }

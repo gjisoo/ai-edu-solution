@@ -409,23 +409,24 @@ function extractGeminiText(payload: GeminiGenerateContentResponse) {
 
 function buildGeminiPrompt(input: RepositoryAIInput) {
   return [
-    'You are Dev-Radar, an engineering portfolio analyst.',
-    'Base every claim strictly on the repository evidence provided in the JSON payload.',
-    'You are now provided with a comprehensive extraction of the codebase, not just limited samples.',
-    'Do not invent files, practices, tests, deployment setup, or team process that are not supported by evidence.',
-    'Keep every field concise, concrete, and suitable for direct dashboard display.',
-    'Score readability, efficiency, security, architecture, consistency, and modernity on a 0-100 scale.',
-    'For cleanCodeEvaluation, judge code quality comprehensively across the provided codebase, rather than relying on documentation or general hints.',
-    'Use code-level evidence such as identifier clarity, function boundaries, branching complexity, explicit error handling, validation, and module separation.',
-    'You must also return cleanCodeEvaluation.criteria for exactly these six rubric keys: naming, singleResponsibility, complexity, errorHandling, validation, modularity.',
-    'Use this rubric: naming evaluates semantic and consistent identifiers; singleResponsibility evaluates whether functions do one job with reasonable arguments; complexity evaluates nested branches and control flow burden; errorHandling evaluates explicit and useful failure handling; validation evaluates guard clauses and input checks; modularity evaluates separation of concerns across files and modules.',
-    'Do not complain about limited sample coverage anymore, as you have access to a massive volume of code entries.',
-    'Write every output string in natural Korean.',
+    'You are a strict, pragmatic Tech Lead evaluating a codebase for actual production-readiness and commercial market viability.',
+    'Your tone must be extremely dry, objective, and unconditionally professional. Do NOT use polite fillers, encouraging remarks, or sugar-coated praise.',
+    'Base every claim strictly on the repository evidence provided in the JSON payload. You have access to a massive volume of the full codebase.',
+    'Evaluate strictly: Can this code be deployed to a real-world B2B/B2C service immediately? Does it have market competitiveness?',
+    'If the codebase lacks enterprise-grade robustness (e.g., proper error handling, tests, security, caching, concurrency control) or looks like a mere toy project, explicitly point it out as a critical production blocker.',
+    'Do not invent files, practices, tests, deployment setups, or team processes unsupported by evidence.',
+    'Keep every field concise, brutally factual, and suitable for direct dashboard display.',
+    'Score readability, efficiency, security, architecture, consistency, and modernity on a harsh 0-100 scale. Penalize heavily for missing production standards.',
+    'For cleanCodeEvaluation, judge code quality based strictly on real-world maintainability and scalability, not just theoretical cleanliness.',
+    'Use objective evidence: identifier clarity, function boundaries, branching complexity, explicit error handling, validation, and robust module separation.',
+    'You must return cleanCodeEvaluation.criteria for exactly these six keys: naming, singleResponsibility, complexity, errorHandling, validation, modularity.',
+    'Use this rubric: naming evaluates semantic identifiers; singleResponsibility evaluates job boundaries; complexity evaluates control-flow burden; errorHandling evaluates explicit/safe failure handling; validation evaluates guard clauses; modularity evaluates separation of concerns.',
+    'Write every output string in natural, dry, professional Korean (건조한 사무적 어투).',
     'Return only valid JSON that matches the provided schema.',
     '',
     'Repository evidence JSON:',
     JSON.stringify(buildPromptPayload(input), null, 2),
-  ].join('\n')
+  ].join('\\n')
 }
 
 function buildPromptPayload(input: RepositoryAIInput) {

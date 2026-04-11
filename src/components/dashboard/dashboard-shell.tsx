@@ -60,6 +60,7 @@ export function DashboardShell() {
   const [isLoading, setIsLoading] = useState(false)
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview')
   const [activeModal, setActiveModal] = useState<DetailModalKey>(null)
+  const [isRetryingAI, setIsRetryingAI] = useState(false)
 
   const summaryStats = useMemo(() => {
     if (!analysis) {
@@ -109,6 +110,24 @@ export function DashboardShell() {
       setError(caughtError instanceof Error ? caughtError.message : '저장소 분석에 실패했습니다.')
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  async function retryAIAnalysis() {
+    if (!repoInput) return
+    setIsRetryingAI(true)
+    try {
+      const response = await fetch('/api/analyze-repo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repo: repoInput }),
+      })
+      const payload = await response.json()
+      if (response.ok && !('error' in payload)) {
+        setAnalysis(payload as DashboardAnalysis)
+      }
+    } finally {
+      setIsRetryingAI(false)
     }
   }
 
@@ -306,7 +325,13 @@ export function DashboardShell() {
 
               <Card className="border-white/70 bg-white/84">
                 <CardContent className="p-5 sm:p-6">
-                  {renderTabContent({ activeTab, analysis, onOpenModal: setActiveModal })}
+                  {renderTabContent({ 
+                    activeTab, 
+                    analysis, 
+                    onOpenModal: setActiveModal,
+                    onRetryAI: retryAIAnalysis,
+                    isRetryingAI
+                  })}
                 </CardContent>
               </Card>
             </section>
@@ -403,10 +428,14 @@ function renderTabContent({
   activeTab,
   analysis,
   onOpenModal,
+  onRetryAI,
+  isRetryingAI,
 }: {
   activeTab: DashboardTab
   analysis: DashboardAnalysis
   onOpenModal: (value: DetailModalKey) => void
+  onRetryAI?: () => void
+  isRetryingAI?: boolean
 }) {
   if (activeTab === 'overview') {
     return (
@@ -466,7 +495,12 @@ function renderTabContent({
 
   if (activeTab === 'clean-code') {
     return (
-      <CleanCodeEvaluationCard cleanCodeEvaluation={analysis.cleanCodeEvaluation} model={analysis.engine.model} />
+      <CleanCodeEvaluationCard 
+        cleanCodeEvaluation={analysis.cleanCodeEvaluation} 
+        model={analysis.engine.model} 
+        onRetry={onRetryAI}
+        isRetrying={isRetryingAI}
+      />
     )
   }
 

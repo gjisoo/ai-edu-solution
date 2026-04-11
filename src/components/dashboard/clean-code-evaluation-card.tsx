@@ -1,37 +1,59 @@
 'use client'
 
-import { Bot, Sigma, TrendingDown, TrendingUp } from 'lucide-react'
+import { Bot, Loader2, RefreshCw, Sigma, TrendingDown, TrendingUp } from 'lucide-react'
 
+import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { CleanCodeEvaluation } from '@/types/dev-radar'
 
 export function CleanCodeEvaluationCard({
   cleanCodeEvaluation,
   model,
+  onRetry,
+  isRetrying = false,
 }: {
   cleanCodeEvaluation: CleanCodeEvaluation | null | undefined
   model: string | null | undefined
+  onRetry?: () => void
+  isRetrying?: boolean
 }) {
   if (!cleanCodeEvaluation) {
     return (
-      <div className="rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
+      <div className="rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-6 shadow-sm">
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-xs uppercase tracking-[0.18em] text-slate-400">
               Gemini 실무 역량 종합 평가
             </p>
-            <p className="mt-2 text-lg font-semibold text-slate-800">
-              데이터 수집 대기 중
+            <p className="mt-2 text-xl font-semibold text-slate-800">
+              AI 분석 데이터 없음 (또는 지연)
             </p>
           </div>
           <div className="rounded-full bg-[#f4efff] p-2">
-            <Bot className="h-4 w-4 text-[#7d6fff]" />
+            <Bot className="h-5 w-5 text-[#7d6fff]" />
           </div>
         </div>
-        <p className="mt-3 text-sm leading-6 text-slate-600">
-          Gemini가 실제 저장소 코드를 분석하고 네이밍, 단일 책임,
-          복잡도, 에러 처리, 방어적 코드, 모듈화 등의 실무 관점 역량을 측정합니다.
+        <p className="mt-4 text-[15px] leading-7 text-slate-600">
+          시간 초과나 저장소 크기 문제로 인해 AI 상세 분석이 완료되지 못했습니다.<br/>
+          아래 버튼을 눌러 이 부분에 대한 데이터만 다시 수집을 시도해볼 수 있습니다.
         </p>
+        {onRetry && (
+          <Button 
+            onClick={onRetry} 
+            disabled={isRetrying} 
+            className="mt-6 h-11 bg-[#7d6fff] px-6 text-white hover:bg-[#6f61f1] shadow-sm rounded-xl"
+          >
+            {isRetrying ? (
+              <span className="inline-flex items-center gap-2 font-medium">
+                <Loader2 className="h-4 w-4 animate-spin" /> 다시 수집하는 중...
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-2 font-medium">
+                <RefreshCw className="h-4 w-4" /> AI 평가만 다시 시도
+              </span>
+            )}
+          </Button>
+        )}
       </div>
     )
   }
