@@ -162,10 +162,10 @@ export function DashboardShell() {
 
           <form onSubmit={handleAnalyze} className="mt-6 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
             <Input
-              type="url"
+              type="text"
               value={repoInput}
               onChange={(event) => setRepoInput(event.target.value)}
-              placeholder="https://github.com/vercel/next.js"
+              placeholder="vercel/next.js 또는 https://github.com/vercel/next.js"
               autoComplete="off"
               autoCorrect="off"
               autoCapitalize="none"

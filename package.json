@@ -9,7 +9,9 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit --incremental false -p tsconfig.typecheck.json",
-    "test": "echo \"No tests configured yet\""
+    "test": "echo \"No tests configured yet\"",
+    "deploy:check": "npm run typecheck && npm run build",
+    "deploy:vercel": "npx vercel --prod"
   },
   "keywords": [
     "dev-radar",

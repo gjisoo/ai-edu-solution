@@ -27,6 +27,12 @@ export function parseGitHubRepositoryInput(input: string): ParsedGitHubRepositor
     return parseRepositoryPath(trimmed)
   }
 
+  if (/^(?:https?:\/\/)?(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?\/?$/i.test(trimmed)) {
+    const withoutProtocol = trimmed.replace(/^https?:\/\//i, '')
+    const pathOnly = withoutProtocol.replace(/^www\./i, '').replace(/^github\.com\//i, '')
+    return parseRepositoryPath(pathOnly)
+  }
+
   let url: URL
 
   try {
