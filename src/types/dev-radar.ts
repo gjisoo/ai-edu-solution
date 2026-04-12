@@ -99,6 +99,14 @@ export interface RepositorySummary {
   topics: string[]
 }
 
+export interface RecommendedCourse {
+  title: string
+  platform: string
+  level: string
+  reason: string
+  matchSkill: string
+}
+
 export interface CodebaseLanguageProfile {
   language: string
   files: number
@@ -173,4 +181,5 @@ export interface DashboardAnalysis {
   activity: ActivityEvent[]
   metricBreakdown?: MetricBreakdown[]
   cleanCodeEvaluation?: CleanCodeEvaluation | null
+  recommendedCourses?: RecommendedCourse[]
 }

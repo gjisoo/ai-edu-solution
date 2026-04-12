@@ -220,14 +220,6 @@ export function DashboardShell() {
                 hint="육각형 지표 항목"
                 onClick={() => setActiveTab('clean-code')}
               />
-              <SummaryActionCard
-                icon={Users}
-                label="기여자별 분석"
-                value={summaryStats.contributorCount}
-                unit="명"
-                hint="협업 역할 흐름"
-                onClick={() => setActiveTab('clean-code')}
-              />
             </section>
 
             <section className="grid gap-6 xl:grid-cols-[1.12fr_0.88fr]">
@@ -335,6 +327,49 @@ export function DashboardShell() {
                     onRetryAI: retryAIAnalysis,
                     isRetryingAI
                   })}
+                </CardContent>
+              </Card>
+            </section>
+
+            {/* 추천 학습 코스 섹션 (항상 하단에 노출) */}
+            <section className="space-y-4">
+              <Card className="border-emerald-200/60 bg-emerald-50/30 overflow-hidden">
+                <div className="bg-emerald-50/50 px-5 py-4 border-b border-emerald-100">
+                  <SectionTitle 
+                    title="추천 학습 코스" 
+                    description="현재 코드베이스에서 발견된 주요 아쉬운 점들을 가장 빠르게 보완할 수 있는 실시간 실무 강의(BM) 매칭입니다." 
+                  />
+                </div>
+                <CardContent className="p-5 sm:p-6">
+                  {(() => {
+                    const courses = analysis.recommendedCourses || []
+                    
+                    if (!courses.length) {
+                      return <EmptyDetailMessage message="추천된 강의가 없습니다. 코드가 이미 훌륭하거나 아직 분석 모델이 추천을 생성하지 못했습니다." />
+                    }
+
+                    return (
+                      <div className="grid gap-4 md:grid-cols-3">
+                        {courses.map((course, idx) => (
+                          <article key={idx} className="rounded-2xl border border-emerald-100 bg-white p-5 shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between">
+                            <div className="space-y-3">
+                              <div className="flex items-center gap-2 flex-wrap mb-2">
+                                <span className="rounded-full bg-emerald-100 px-3 py-1 text-[11px] font-bold text-emerald-700">{course.platform}</span>
+                                <span className="rounded-full bg-slate-100 border border-slate-200 px-3 py-1 text-[11px] font-bold text-slate-600">{course.level}</span>
+                              </div>
+                              <h4 className="text-[16px] font-bold text-slate-900 leading-snug">{course.title}</h4>
+                              <p className="text-[14px] leading-relaxed text-slate-600">{course.reason}</p>
+                            </div>
+                            <div className="mt-4 pt-4 border-t border-slate-100">
+                              <div className="inline-flex rounded-lg bg-orange-50 px-2.5 py-1.5 text-[12px] font-semibold text-orange-700">
+                                보완 포인트: {course.matchSkill}
+                              </div>
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    )
+                  })()}
                 </CardContent>
               </Card>
             </section>
@@ -494,33 +529,7 @@ function renderTabContent({
             </div>
           </div>
 
-          <div className="rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm">
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-400">기여자 핵심 신호</p>
-            <p className="mt-2 text-sm text-slate-600">협업 저장소라면 사람별 기여 흐름을 함께 확인하세요.</p>
-            <div className="mt-4 grid gap-3">
-              {analysis.contributorInsights.length > 0 ? (
-                analysis.contributorInsights.slice(0, 3).map((contributor) => (
-                  <article key={contributor.id} className="rounded-2xl border border-[#eadfdb] bg-white px-3 py-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <strong className="text-sm text-slate-900">
-                        {contributor.handle ? `@${contributor.handle}` : contributor.name}
-                      </strong>
-                      <span className="rounded-full bg-[#f4efff] px-2.5 py-1 text-[11px] font-semibold text-[#7163ea]">
-                        {contributor.focusArea}
-                      </span>
-                    </div>
-                    <p className="mt-2 text-xs leading-5 text-slate-600">
-                      코드 품질 {contributor.codeQualityScore}점 · 최근 커밋 {contributor.recentCommitCount}건 · 누적 기여 {formatContributionCount(contributor.totalContributions)}
-                    </p>
-                  </article>
-                ))
-              ) : (
-                <p className="rounded-2xl border border-[#eadfdb] bg-white px-3 py-3 text-sm text-slate-500">
-                  기여자 정보를 아직 수집하지 못했습니다.
-                </p>
-              )}
-            </div>
-          </div>
+
         </div>
       </div>
     )

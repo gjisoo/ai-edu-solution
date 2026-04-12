@@ -21,6 +21,13 @@ export interface RepositoryAIEnhancement {
   aiInsight: AIInsight
   reviewSuggestions: Array<Pick<ReviewSuggestion, 'title' | 'impact' | 'description'>>
   conceptGaps: Array<Pick<ConceptGap, 'title' | 'category' | 'severity' | 'summary' | 'recommendation'>>
+  recommendedCourses: Array<{
+    title: string
+    platform: string
+    level: string
+    reason: string
+    matchSkill: string
+  }>
 }
 
 type RepositoryAIInput = {
@@ -120,6 +127,7 @@ const AI_SCHEMA = {
     'aiInsight',
     'reviewSuggestions',
     'conceptGaps',
+    'recommendedCourses',
   ],
   properties: {
     focusArea: {
@@ -289,6 +297,23 @@ const AI_SCHEMA = {
         },
       },
     },
+    recommendedCourses: {
+      type: 'array',
+      minItems: 3,
+      maxItems: 3,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['title', 'platform', 'level', 'reason', 'matchSkill'],
+        properties: {
+          title: { type: 'string', description: 'Real-world IT course title (e.g. from Inflearn, Udemy, etc)' },
+          platform: { type: 'string', description: 'e.g., 인프런, 패스트캠퍼스, 유데미, 공식문서' },
+          level: { type: 'string', description: 'e.g., 입문, 중급, 실전' },
+          reason: { type: 'string', description: 'Specific reason for recommending this course based on their gaps' },
+          matchSkill: { type: 'string', description: 'The weak metric or skill this course covers' },
+        },
+      },
+    },
   },
 } as const
 
@@ -437,6 +462,9 @@ function buildGeminiPrompt(input: RepositoryAIInput) {
     'Use objective evidence: identifier clarity, function boundaries, branching complexity, explicit error handling, validation, and robust module separation.',
     'You must return cleanCodeEvaluation.criteria for exactly these six keys: naming, singleResponsibility, complexity, errorHandling, validation, modularity.',
     'Use this rubric: naming evaluates semantic identifiers; singleResponsibility evaluates job boundaries; complexity evaluates control-flow burden; errorHandling evaluates explicit/safe failure handling; validation evaluates guard clauses; modularity evaluates separation of concerns.',
+    'Analyze the gaps and weak areas of the codebase.',
+    'Recommend exactly 3 real-world IT online courses (e.g., from 인프런, 패스트캠퍼스, 유데미, 프로그래머스) or official frameworks docs that can directly help the developer close their concept gaps or improve their weakest metric.',
+    'Return this in recommendedCourses. Include the exact Korean title of the course, platform, level, reason for recommendation, and the specific matchSkill.',
     'Write every output string in natural, dry, professional Korean (건조한 사무적 어투).',
     'Return only valid JSON that matches the provided schema.',
     '',
@@ -580,6 +608,13 @@ function parseAIEnhancement(rawText: string, model: string): RepositoryAIEnhance
       summary: item.summary.trim(),
       recommendation: item.recommendation.trim(),
     })),
+    recommendedCourses: parsed.recommendedCourses.map((item) => ({
+      title: item.title.trim(),
+      platform: item.platform.trim(),
+      level: item.level.trim(),
+      reason: item.reason.trim(),
+      matchSkill: item.matchSkill.trim(),
+    })),
   }
 }
 
@@ -644,6 +679,13 @@ function isAIEnhancementShape(value: unknown): value is {
     summary: string
     recommendation: string
   }>
+  recommendedCourses: Array<{
+    title: string
+    platform: string
+    level: string
+    reason: string
+    matchSkill: string
+  }>
 } {
   if (!isRecord(value)) {
     return false
@@ -662,7 +704,9 @@ function isAIEnhancementShape(value: unknown): value is {
     !Array.isArray(value.reviewSuggestions) ||
     value.reviewSuggestions.length < 1 ||
     !Array.isArray(value.conceptGaps) ||
-    value.conceptGaps.length < 1
+    value.conceptGaps.length < 1 ||
+    !Array.isArray(value.recommendedCourses) ||
+    value.recommendedCourses.length < 1
   ) {
     return false
   }
@@ -683,8 +727,17 @@ function isAIEnhancementShape(value: unknown): value is {
       typeof item.summary === 'string' &&
       typeof item.recommendation === 'string',
   )
+  const coursesAreValid = value.recommendedCourses.every(
+    (item) =>
+      isRecord(item) &&
+      typeof item.title === 'string' &&
+      typeof item.platform === 'string' &&
+      typeof item.level === 'string' &&
+      typeof item.reason === 'string' &&
+      typeof item.matchSkill === 'string',
+  )
 
-  return suggestionsAreValid && gapsAreValid
+  return suggestionsAreValid && gapsAreValid && coursesAreValid
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

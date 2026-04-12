@@ -6,6 +6,7 @@ import type {
   DashboardAnalysis,
   DevMetric,
   MarketFit,
+  RecommendedCourse,
   RepositorySummary,
   ReviewSuggestion,
 } from '@/types/dev-radar'
@@ -132,6 +133,32 @@ function createConceptGaps(seed: number): ConceptGap[] {
       summary:
         '테스트는 통과하지만 mock, stub, spy의 경계가 아직 명확하지 않아 이후 기여자가 테스트를 깔끔하게 확장하기 어려울 수 있습니다.',
       recommendation: 'mock, stub, spy를 언제 쓰는지 문서화해 이후 테스트가 예측 가능하게 유지되도록 하세요.',
+    },
+  ]
+}
+
+function createRecommendedCourses(seed: number): RecommendedCourse[] {
+  return [
+    {
+      title: '실전! 스프링 부트와 JPA 활용',
+      platform: '인프런',
+      level: '중급',
+      reason: '현재 엔티티 설계와 데이터 접근 로직의 결합도가 높습니다. JPA를 활용한 도메인 주도 설계 패턴을 익혀보세요.',
+      matchSkill: '아키텍처 및 계층 분리',
+    },
+    {
+      title: 'Docker & Kubernetes 올인원 패키지',
+      platform: '패스트캠퍼스',
+      level: '실전',
+      reason: '컨테이너 기반 배포 파이프라인 신호가 부족합니다. CI/CD 환경 구축과 무중단 배포를 경험해 보세요.',
+      matchSkill: '인프라/배포',
+    },
+    {
+      title: '테스트 주도 개발(TDD) 실무',
+      platform: '유데미',
+      level: '입문',
+      reason: '전체 코드 중 테스트 커버리지가 매우 낮아 리팩토링 리스크가 큽니다. 빠른 피드백 루프를 만드는 방법을 배워보세요.',
+      matchSkill: '테스트 동반성',
     },
   ]
 }
@@ -278,6 +305,7 @@ export function createDashboardAnalysis(githubId: string): DashboardAnalysis {
     metrics,
     marketFits: createMarketFits(seed),
     conceptGaps: createConceptGaps(seed),
+    recommendedCourses: createRecommendedCourses(seed),
     reviewSuggestions: createReviewSuggestions(seed),
     activity: createActivity(seed, normalizedRepository),
   }

@@ -416,6 +416,7 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
       summary: item.summary,
       recommendation: item.recommendation,
     })),
+    recommendedCourses: aiEnhancement.recommendedCourses,
   }
 }
 
