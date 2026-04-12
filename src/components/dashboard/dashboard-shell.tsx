@@ -158,11 +158,6 @@ export function DashboardShell() {
                 핵심 역량 지표와 집중 성장 포인트를 먼저 짚어주며, 상세 내용은 탭과 팝업으로 깊이 있게 분석할 수 있습니다.
               </p>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <StatusChip label="GitHub 저장소 분석" tone="green" />
-              <StatusChip label={analysis?.engine.mode === 'hybrid-ai' ? 'Gemini 정성 평가' : '기본 분석 모드'} tone={analysis?.engine.mode === 'hybrid-ai' ? 'violet' : 'slate'} />
-              <StatusChip label="페이지 이동 없는 상세 보기" tone="rose" />
-            </div>
           </div>
 
           <form onSubmit={handleAnalyze} className="mt-6 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">

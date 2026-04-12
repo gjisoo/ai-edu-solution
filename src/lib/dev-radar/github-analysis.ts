@@ -549,6 +549,22 @@ export async function analyzeGitHubRepository(
     return heuristicAnalysis
   }
 
+  const aiConceptGapsForCourses: ConceptGap[] = aiEnhancement.conceptGaps.map((item, index) => ({
+    id: `ai-gap-course-${index + 1}`,
+    title: item.title,
+    category: item.category,
+    severity: item.severity,
+    timestamp: heuristicAnalysis.collectedAt,
+    summary: item.summary,
+    recommendation: item.recommendation,
+  }))
+  const aiFallbackCourses = buildRecommendedCourses({
+    metrics: aiEnhancement.metrics,
+    conceptGaps: aiConceptGapsForCourses,
+    signals: repositorySignals,
+    preferredCoursePlatforms,
+  })
+
   return {
     ...heuristicAnalysis,
     engine: {
@@ -582,8 +598,11 @@ export async function analyzeGitHubRepository(
     })),
     recommendedCourses: normalizeAIRecommendedCourses({
       aiCourses: aiEnhancement.recommendedCourses,
-      fallbackCourses: recommendedCourses,
+      fallbackCourses: aiFallbackCourses,
       preferredCoursePlatforms,
+      metrics: aiEnhancement.metrics,
+      conceptGaps: aiConceptGapsForCourses,
+      signals: repositorySignals,
     }),
   }
 }
@@ -1790,23 +1809,44 @@ function normalizeAIRecommendedCourses({
   aiCourses,
   fallbackCourses,
   preferredCoursePlatforms,
+  metrics,
+  conceptGaps,
+  signals,
 }: {
   aiCourses: RecommendedCourse[]
   fallbackCourses: RecommendedCourse[]
   preferredCoursePlatforms: string[]
+  metrics: DevMetric
+  conceptGaps: ConceptGap[]
+  signals: ReturnType<typeof buildRepositorySignals>
 }) {
   const preferred = normalizePreferredCoursePlatforms(preferredCoursePlatforms)
+  const priorityTags = deriveCourseRecommendationTags({
+    metrics,
+    conceptGaps,
+    signals,
+  })
   const selected: RecommendedCourse[] = []
   const usedUrls = new Set<string>()
+  const normalizedAI = aiCourses
+    .map((course) => normalizeRecommendedCourse(course, preferred))
+    .filter((course): course is RecommendedCourse => Boolean(course?.url))
+    .sort((left, right) => {
+      const leftIndex = getCoursePriorityIndex(left, priorityTags)
+      const rightIndex = getCoursePriorityIndex(right, priorityTags)
+      if (leftIndex !== rightIndex) {
+        return leftIndex - rightIndex
+      }
+      return left.title.localeCompare(right.title, 'ko')
+    })
 
-  for (const course of aiCourses) {
-    const normalized = normalizeRecommendedCourse(course, preferred)
-    if (!normalized || !normalized.url || usedUrls.has(normalized.url)) {
+  for (const course of normalizedAI) {
+    if (!course.url || usedUrls.has(course.url)) {
       continue
     }
 
-    selected.push(normalized)
-    usedUrls.add(normalized.url)
+    selected.push(course)
+    usedUrls.add(course.url)
     if (selected.length >= 3) {
       return selected
     }
@@ -1880,38 +1920,75 @@ function deriveCourseRecommendationTags({
   conceptGaps: ConceptGap[]
   signals: ReturnType<typeof buildRepositorySignals>
 }) {
-  const weakestMetric = (Object.entries(metrics) as Array<[keyof DevMetric, number]>).reduce((lowest, current) =>
-    current[1] < lowest[1] ? current : lowest,
-  )[0]
-  const tags = new Set<string>()
-  const metricToTag: Record<keyof DevMetric, string> = {
-    readability: 'readability',
-    efficiency: 'efficiency',
-    security: 'security',
-    architecture: 'architecture',
-    consistency: 'testing',
-    modernity: 'modernity',
+  const rankedMetrics = (Object.entries(metrics) as Array<[keyof DevMetric, number]>).sort(
+    (left, right) => left[1] - right[1],
+  )
+  const metricToTags: Record<keyof DevMetric, string[]> = {
+    readability: ['readability'],
+    efficiency: ['efficiency', 'ci'],
+    security: ['security'],
+    architecture: ['architecture'],
+    consistency: ['testing'],
+    modernity: ['modernity'],
+  }
+  const tags: string[] = []
+  const pushTag = (tag: string | null | undefined) => {
+    if (!tag || tags.includes(tag)) {
+      return
+    }
+    tags.push(tag)
   }
 
-  tags.add(metricToTag[weakestMetric])
+  for (const [metric] of rankedMetrics) {
+    for (const tag of metricToTags[metric]) {
+      pushTag(tag)
+    }
+  }
 
   if (!signals.hasTests || conceptGaps.some((gap) => /테스트|회귀|품질/.test(gap.title + gap.summary))) {
-    tags.add('testing')
+    pushTag('testing')
   }
   if (!signals.hasCi || conceptGaps.some((gap) => /CI|배포|파이프라인/.test(gap.title + gap.summary))) {
-    tags.add('ci')
+    pushTag('ci')
   }
   if (conceptGaps.some((gap) => /보안|검증|오류|에러|취약/.test(gap.title + gap.summary))) {
-    tags.add('security')
+    pushTag('security')
   }
   if (conceptGaps.some((gap) => /아키텍처|구조|모듈|계층/.test(gap.title + gap.summary))) {
-    tags.add('architecture')
+    pushTag('architecture')
   }
   if (!signals.hasTypedLanguage) {
-    tags.add('modernity')
+    pushTag('modernity')
   }
 
-  return Array.from(tags)
+  return tags
+}
+
+function getCoursePriorityIndex(course: RecommendedCourse, priorityTags: string[]) {
+  const normalizedUrl = course.url?.trim()
+  const matchedCatalog = COURSE_CATALOG.find((item) => {
+    if (normalizedUrl) {
+      return item.url === normalizedUrl
+    }
+
+    return item.title.trim().toLowerCase() === course.title.trim().toLowerCase()
+  })
+
+  const candidateTags = new Set<string>(matchedCatalog?.tags ?? [])
+  const inferredTag = inferCourseTag(course.matchSkill, course.reason)
+  if (inferredTag) {
+    candidateTags.add(inferredTag)
+  }
+
+  let bestIndex = Number.MAX_SAFE_INTEGER
+  for (const tag of candidateTags) {
+    const index = priorityTags.indexOf(tag)
+    if (index >= 0 && index < bestIndex) {
+      bestIndex = index
+    }
+  }
+
+  return bestIndex
 }
 
 function pickCourseFromCatalog({
