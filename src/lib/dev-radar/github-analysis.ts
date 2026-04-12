@@ -17,6 +17,7 @@ import type {
   DevMetric,
   MarketFit,
   MetricBreakdown,
+  RecommendedCourse,
   RepositoryLanguage,
   ReviewSuggestion,
 } from '@/types/dev-radar'
@@ -108,6 +109,24 @@ const WORKFLOW_FILE_PATTERN = /\.(ya?ml)$/i
 const MAX_CONTRIBUTOR_COUNT = 8
 const MAX_COMMIT_DETAIL_COMMITS = MAX_COMMITS
 const MAX_COMMIT_FILES_FOR_QUALITY = 80
+const SUPPORTED_COURSE_PLATFORMS = ['인프런', '유데미', '프로그래머스', '공식문서'] as const
+const DEFAULT_COURSE_PLATFORMS: Array<(typeof SUPPORTED_COURSE_PLATFORMS)[number]> = ['인프런', '유데미', '프로그래머스']
+const VERIFIED_COURSE_URLS = new Set([
+  'https://www.inflearn.com/course/%ED%83%80%EC%9E%85%EC%8A%A4%ED%81%AC%EB%A6%BD%ED%8A%B8-%EC%8B%9C%EC%9E%91%ED%95%98%EA%B8%B0',
+  'https://www.inflearn.com/course/%EC%8A%A4%ED%94%84%EB%A7%81-%EC%9E%85%EB%AC%B8-%EC%8A%A4%ED%94%84%EB%A7%81%EB%B6%80%ED%8A%B8',
+  'https://www.udemy.com/course/understanding-typescript/',
+  'https://www.udemy.com/course/docker-kubernetes-the-practical-guide/',
+  'https://www.udemy.com/course/unit-testing-and-test-driven-development-in-nodejs/',
+  'https://www.udemy.com/course/github-actions/',
+  'https://www.udemy.com/course/writing-clean-code/',
+  'https://www.udemy.com/course/a-complete-beginner-guide-to-web-application-security/',
+  'https://school.programmers.co.kr/learn/courses/30',
+  'https://school.programmers.co.kr/learn/courses/4008',
+  'https://docs.github.com/en/actions',
+  'https://www.typescriptlang.org/docs/',
+  'https://owasp.org/www-project-top-ten/',
+  'https://developer.mozilla.org/ko/docs/Learn',
+])
 const HEURISTIC_CLEAN_CODE_CRITERIA: Array<{
   key: CleanCodeCriterionKey
   label: string
@@ -234,6 +253,137 @@ type WorkflowSignal = {
   hasDeploy: boolean
 }
 
+type CoursePlatform = (typeof SUPPORTED_COURSE_PLATFORMS)[number]
+
+const COURSE_CATALOG: Array<RecommendedCourse & { platform: CoursePlatform; tags: string[] }> = [
+  {
+    title: '타입스크립트 시작하기',
+    platform: '인프런',
+    level: '입문',
+    reason: '타입 기반 설계를 빠르게 익혀 코드 안정성과 유지보수성을 개선할 수 있습니다.',
+    matchSkill: '현대성/타입 안정성',
+    url: 'https://www.inflearn.com/course/%ED%83%80%EC%9E%85%EC%8A%A4%ED%81%AC%EB%A6%BD%ED%8A%B8-%EC%8B%9C%EC%9E%91%ED%95%98%EA%B8%B0',
+    tags: ['modernity', 'validation', 'consistency', 'readability'],
+  },
+  {
+    title: '스프링 입문 - 코드로 배우는 스프링 부트, 웹 MVC, DB 접근 기술',
+    platform: '인프런',
+    level: '입문-중급',
+    reason: '계층 분리와 구조 설계 기본기를 체계적으로 다질 수 있는 과정입니다.',
+    matchSkill: '구조 설계',
+    url: 'https://www.inflearn.com/course/%EC%8A%A4%ED%94%84%EB%A7%81-%EC%9E%85%EB%AC%B8-%EC%8A%A4%ED%94%84%EB%A7%81%EB%B6%80%ED%8A%B8',
+    tags: ['architecture', 'modularity', 'readability'],
+  },
+  {
+    title: 'Understanding TypeScript',
+    platform: '유데미',
+    level: '입문-중급',
+    reason: '타입 설계와 추론을 실제 프로젝트 흐름으로 학습할 수 있습니다.',
+    matchSkill: '현대성/타입 안정성',
+    url: 'https://www.udemy.com/course/understanding-typescript/',
+    tags: ['modernity', 'validation', 'consistency'],
+  },
+  {
+    title: 'Docker & Kubernetes: The Practical Guide',
+    platform: '유데미',
+    level: '중급',
+    reason: '배포 환경 표준화와 운영 효율 개선에 직접 연결되는 실전 과정입니다.',
+    matchSkill: '효율성/배포',
+    url: 'https://www.udemy.com/course/docker-kubernetes-the-practical-guide/',
+    tags: ['efficiency', 'devops', 'architecture'],
+  },
+  {
+    title: 'Unit Testing and Test-Driven Development in NodeJS',
+    platform: '유데미',
+    level: '중급',
+    reason: '테스트 동반 개발 습관을 만들어 회귀 리스크를 줄일 수 있습니다.',
+    matchSkill: '일관성/테스트',
+    url: 'https://www.udemy.com/course/unit-testing-and-test-driven-development-in-nodejs/',
+    tags: ['testing', 'consistency', 'validation'],
+  },
+  {
+    title: 'GitHub Actions',
+    platform: '유데미',
+    level: '중급',
+    reason: 'CI 자동화 기준선을 빠르게 구축해 품질 검증 속도를 높일 수 있습니다.',
+    matchSkill: '효율성/CI',
+    url: 'https://www.udemy.com/course/github-actions/',
+    tags: ['ci', 'efficiency', 'consistency'],
+  },
+  {
+    title: 'Writing Clean Code',
+    platform: '유데미',
+    level: '입문-중급',
+    reason: '가독성, 모듈화, 책임 분리에 대한 실무 기준을 정리하기 좋습니다.',
+    matchSkill: '가독성/모듈화',
+    url: 'https://www.udemy.com/course/writing-clean-code/',
+    tags: ['readability', 'architecture', 'modularity'],
+  },
+  {
+    title: 'A Complete Beginner Guide to Web Application Security',
+    platform: '유데미',
+    level: '입문-중급',
+    reason: '입력 검증과 취약점 대응 기본기를 정리하는 데 효과적입니다.',
+    matchSkill: '보안성',
+    url: 'https://www.udemy.com/course/a-complete-beginner-guide-to-web-application-security/',
+    tags: ['security', 'validation', 'errorHandling'],
+  },
+  {
+    title: '코딩테스트 고득점 Kit',
+    platform: '프로그래머스',
+    level: '입문-중급',
+    reason: '문제 해결력과 로직 복잡도 제어 역량을 강화할 수 있습니다.',
+    matchSkill: '복잡도/효율성',
+    url: 'https://school.programmers.co.kr/learn/courses/30',
+    tags: ['complexity', 'efficiency', 'consistency'],
+  },
+  {
+    title: '개발자 학습 과정',
+    platform: '프로그래머스',
+    level: '중급',
+    reason: '실전 중심 학습 경로로 기본 역량을 균형 있게 보완할 수 있습니다.',
+    matchSkill: '실무 기본기',
+    url: 'https://school.programmers.co.kr/learn/courses/4008',
+    tags: ['readability', 'architecture', 'testing'],
+  },
+  {
+    title: 'GitHub Actions 공식 문서',
+    platform: '공식문서',
+    level: '입문-중급',
+    reason: 'CI/CD 설정을 가장 정확한 원문 기준으로 학습할 수 있습니다.',
+    matchSkill: '효율성/CI',
+    url: 'https://docs.github.com/en/actions',
+    tags: ['ci', 'efficiency', 'consistency'],
+  },
+  {
+    title: 'TypeScript Handbook',
+    platform: '공식문서',
+    level: '입문-중급',
+    reason: '타입 시스템 핵심 개념을 최신 사양 기준으로 정리할 수 있습니다.',
+    matchSkill: '현대성/타입 안정성',
+    url: 'https://www.typescriptlang.org/docs/',
+    tags: ['modernity', 'validation', 'readability'],
+  },
+  {
+    title: 'OWASP Top 10',
+    platform: '공식문서',
+    level: '중급',
+    reason: '웹 보안 취약점 우선순위를 체계적으로 점검하는 데 유용합니다.',
+    matchSkill: '보안성',
+    url: 'https://owasp.org/www-project-top-ten/',
+    tags: ['security', 'validation', 'errorHandling'],
+  },
+  {
+    title: 'MDN Web Docs Learn',
+    platform: '공식문서',
+    level: '입문',
+    reason: '웹 기본기와 코드 가독성 관련 기초를 빠르게 정비할 수 있습니다.',
+    matchSkill: '가독성/기본기',
+    url: 'https://developer.mozilla.org/ko/docs/Learn',
+    tags: ['readability', 'modernity'],
+  },
+]
+
 class GitHubAnalysisError extends Error {
   status: number
 
@@ -244,10 +394,16 @@ class GitHubAnalysisError extends Error {
   }
 }
 
-export async function analyzeGitHubRepository(input: string): Promise<DashboardAnalysis> {
+export async function analyzeGitHubRepository(
+  input: string,
+  options: {
+    preferredCoursePlatforms?: string[]
+  } = {},
+): Promise<DashboardAnalysis> {
   const parsed = parseGitHubRepositoryInput(input)
   const repositoryPath = `/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}`
   const repository = await fetchGitHubJson<GitHubRepositoryResponse>(repositoryPath)
+  const preferredCoursePlatforms = normalizePreferredCoursePlatforms(options.preferredCoursePlatforms)
 
   const [languages, commits, contributors, { rootFileContents, workflowSignals, codeSamples, rootContents, codebaseProfile }] = await Promise.all([
     fetchGitHubJson<Record<string, number>>(`${repositoryPath}/languages`),
@@ -285,6 +441,12 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
   const marketFits = buildMarketFits(repositorySignals)
   const reviewSuggestions = buildReviewSuggestions(repositorySignals)
   const conceptGaps = buildConceptGaps(repositorySignals)
+  const recommendedCourses = buildRecommendedCourses({
+    metrics,
+    conceptGaps,
+    signals: repositorySignals,
+    preferredCoursePlatforms,
+  })
   const activity = buildActivity(repositorySignals)
   const collectedAtDate = new Date()
   const collectedAt = formatDateTime(collectedAtDate)
@@ -336,6 +498,7 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
     cleanCodeEvaluation: fallbackCleanCodeEvaluation,
     marketFits,
     conceptGaps,
+    recommendedCourses,
     reviewSuggestions,
     activity,
   }
@@ -379,6 +542,7 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
       risk: item.risk,
       recommendation: item.recommendation,
     })),
+    preferredCoursePlatforms,
   })
 
   if (!aiEnhancement) {
@@ -416,7 +580,11 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
       summary: item.summary,
       recommendation: item.recommendation,
     })),
-    recommendedCourses: aiEnhancement.recommendedCourses,
+    recommendedCourses: normalizeAIRecommendedCourses({
+      aiCourses: aiEnhancement.recommendedCourses,
+      fallbackCourses: recommendedCourses,
+      preferredCoursePlatforms,
+    }),
   }
 }
 
@@ -1562,6 +1730,281 @@ function buildConceptGaps(signals: ReturnType<typeof buildRepositorySignals>): C
   }
 
   return gaps.slice(0, 3)
+}
+
+function buildRecommendedCourses({
+  metrics,
+  conceptGaps,
+  signals,
+  preferredCoursePlatforms,
+}: {
+  metrics: DevMetric
+  conceptGaps: ConceptGap[]
+  signals: ReturnType<typeof buildRepositorySignals>
+  preferredCoursePlatforms: string[]
+}): RecommendedCourse[] {
+  const preferred = normalizePreferredCoursePlatforms(preferredCoursePlatforms)
+  const tags = deriveCourseRecommendationTags({
+    metrics,
+    conceptGaps,
+    signals,
+  })
+  const selected: RecommendedCourse[] = []
+  const usedUrls = new Set<string>()
+
+  for (const tag of tags) {
+    const course = pickCourseFromCatalog({
+      preferredCoursePlatforms: preferred,
+      tag,
+      usedUrls,
+    })
+    if (!course) {
+      continue
+    }
+    selected.push(course)
+    usedUrls.add(course.url ?? '')
+    if (selected.length >= 3) {
+      return selected
+    }
+  }
+
+  for (const platform of preferred) {
+    const course = pickCourseFromCatalog({
+      preferredCoursePlatforms: [platform],
+      usedUrls,
+    })
+    if (!course) {
+      continue
+    }
+    selected.push(course)
+    usedUrls.add(course.url ?? '')
+    if (selected.length >= 3) {
+      return selected
+    }
+  }
+
+  return selected
+}
+
+function normalizeAIRecommendedCourses({
+  aiCourses,
+  fallbackCourses,
+  preferredCoursePlatforms,
+}: {
+  aiCourses: RecommendedCourse[]
+  fallbackCourses: RecommendedCourse[]
+  preferredCoursePlatforms: string[]
+}) {
+  const preferred = normalizePreferredCoursePlatforms(preferredCoursePlatforms)
+  const selected: RecommendedCourse[] = []
+  const usedUrls = new Set<string>()
+
+  for (const course of aiCourses) {
+    const normalized = normalizeRecommendedCourse(course, preferred)
+    if (!normalized || !normalized.url || usedUrls.has(normalized.url)) {
+      continue
+    }
+
+    selected.push(normalized)
+    usedUrls.add(normalized.url)
+    if (selected.length >= 3) {
+      return selected
+    }
+  }
+
+  for (const fallback of fallbackCourses) {
+    const normalized = normalizeRecommendedCourse(fallback, preferred)
+    if (!normalized || !normalized.url || usedUrls.has(normalized.url)) {
+      continue
+    }
+    selected.push(normalized)
+    usedUrls.add(normalized.url)
+    if (selected.length >= 3) {
+      break
+    }
+  }
+
+  return selected
+}
+
+function normalizeRecommendedCourse(
+  course: RecommendedCourse,
+  preferredCoursePlatforms: CoursePlatform[],
+): RecommendedCourse | null {
+  const normalizedPlatform = normalizeCoursePlatform(course.platform)
+  const normalizedUrl = typeof course.url === 'string' ? course.url.trim() : ''
+
+  if (
+    normalizedPlatform &&
+    preferredCoursePlatforms.includes(normalizedPlatform) &&
+    normalizedUrl &&
+    isVerifiedCourseUrl(normalizedUrl)
+  ) {
+    return {
+      ...course,
+      platform: normalizedPlatform,
+      url: normalizedUrl,
+    }
+  }
+
+  const matchedByTitle = COURSE_CATALOG.find(
+    (item) =>
+      item.title.trim().toLowerCase() === course.title.trim().toLowerCase() &&
+      preferredCoursePlatforms.includes(item.platform),
+  )
+  if (matchedByTitle?.url && isVerifiedCourseUrl(matchedByTitle.url)) {
+    return {
+      title: matchedByTitle.title,
+      platform: matchedByTitle.platform,
+      level: matchedByTitle.level,
+      reason: course.reason?.trim() || matchedByTitle.reason,
+      matchSkill: course.matchSkill?.trim() || matchedByTitle.matchSkill,
+      url: matchedByTitle.url,
+    }
+  }
+
+  const inferredTag = inferCourseTag(course.matchSkill, course.reason)
+  return pickCourseFromCatalog({
+    preferredCoursePlatforms,
+    tag: inferredTag,
+    usedUrls: new Set(),
+  })
+}
+
+function deriveCourseRecommendationTags({
+  metrics,
+  conceptGaps,
+  signals,
+}: {
+  metrics: DevMetric
+  conceptGaps: ConceptGap[]
+  signals: ReturnType<typeof buildRepositorySignals>
+}) {
+  const weakestMetric = (Object.entries(metrics) as Array<[keyof DevMetric, number]>).reduce((lowest, current) =>
+    current[1] < lowest[1] ? current : lowest,
+  )[0]
+  const tags = new Set<string>()
+  const metricToTag: Record<keyof DevMetric, string> = {
+    readability: 'readability',
+    efficiency: 'efficiency',
+    security: 'security',
+    architecture: 'architecture',
+    consistency: 'testing',
+    modernity: 'modernity',
+  }
+
+  tags.add(metricToTag[weakestMetric])
+
+  if (!signals.hasTests || conceptGaps.some((gap) => /테스트|회귀|품질/.test(gap.title + gap.summary))) {
+    tags.add('testing')
+  }
+  if (!signals.hasCi || conceptGaps.some((gap) => /CI|배포|파이프라인/.test(gap.title + gap.summary))) {
+    tags.add('ci')
+  }
+  if (conceptGaps.some((gap) => /보안|검증|오류|에러|취약/.test(gap.title + gap.summary))) {
+    tags.add('security')
+  }
+  if (conceptGaps.some((gap) => /아키텍처|구조|모듈|계층/.test(gap.title + gap.summary))) {
+    tags.add('architecture')
+  }
+  if (!signals.hasTypedLanguage) {
+    tags.add('modernity')
+  }
+
+  return Array.from(tags)
+}
+
+function pickCourseFromCatalog({
+  preferredCoursePlatforms,
+  usedUrls,
+  tag,
+}: {
+  preferredCoursePlatforms: CoursePlatform[]
+  usedUrls: Set<string>
+  tag?: string | null
+}): RecommendedCourse | null {
+  for (const platform of preferredCoursePlatforms) {
+    const candidates = COURSE_CATALOG.filter((item) => item.platform === platform)
+    const byTag = tag
+      ? candidates.find((item) => item.tags.includes(tag) && item.url && !usedUrls.has(item.url))
+      : null
+    if (byTag) {
+      return {
+        title: byTag.title,
+        platform: byTag.platform,
+        level: byTag.level,
+        reason: byTag.reason,
+        matchSkill: byTag.matchSkill,
+        url: byTag.url,
+      }
+    }
+
+    const firstUnused = candidates.find((item) => item.url && !usedUrls.has(item.url))
+    if (firstUnused) {
+      return {
+        title: firstUnused.title,
+        platform: firstUnused.platform,
+        level: firstUnused.level,
+        reason: firstUnused.reason,
+        matchSkill: firstUnused.matchSkill,
+        url: firstUnused.url,
+      }
+    }
+  }
+
+  return null
+}
+
+function normalizePreferredCoursePlatforms(input?: string[]) {
+  const normalized = (input ?? [])
+    .map((item) => normalizeCoursePlatform(item))
+    .filter((item): item is CoursePlatform => item !== null)
+  const unique = Array.from(new Set(normalized))
+
+  return unique.length ? unique : [...DEFAULT_COURSE_PLATFORMS]
+}
+
+function normalizeCoursePlatform(value: string | null | undefined): CoursePlatform | null {
+  if (!value) {
+    return null
+  }
+
+  const normalized = value.trim().toLowerCase()
+  const aliases: Array<{ keywords: string[]; platform: CoursePlatform }> = [
+    { keywords: ['인프런', 'inflearn'], platform: '인프런' },
+    { keywords: ['유데미', 'udemy'], platform: '유데미' },
+    { keywords: ['프로그래머스', 'programmers'], platform: '프로그래머스' },
+    { keywords: ['공식문서', 'official', 'docs', 'documentation'], platform: '공식문서' },
+  ]
+
+  for (const alias of aliases) {
+    if (alias.keywords.some((keyword) => normalized.includes(keyword))) {
+      return alias.platform
+    }
+  }
+
+  return null
+}
+
+function inferCourseTag(matchSkill?: string, reason?: string) {
+  const source = `${matchSkill ?? ''} ${reason ?? ''}`.toLowerCase()
+
+  if (/보안|security|취약|검증/.test(source)) return 'security'
+  if (/테스트|test|tdd|회귀/.test(source)) return 'testing'
+  if (/아키텍처|구조|모듈|architecture/.test(source)) return 'architecture'
+  if (/ci|cd|배포|파이프라인|actions|efficiency/.test(source)) return 'ci'
+  if (/타입|typescript|modern/.test(source)) return 'modernity'
+  if (/가독성|readability|clean code/.test(source)) return 'readability'
+
+  return null
+}
+
+function isVerifiedCourseUrl(value: string) {
+  if (!/^https?:\/\//i.test(value)) {
+    return false
+  }
+
+  return VERIFIED_COURSE_URLS.has(value)
 }
 
 function buildActivity(signals: ReturnType<typeof buildRepositorySignals>): ActivityEvent[] {

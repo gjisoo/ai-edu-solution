@@ -27,6 +27,7 @@ export interface RepositoryAIEnhancement {
     level: string
     reason: string
     matchSkill: string
+    url: string
   }>
 }
 
@@ -74,6 +75,7 @@ type RepositoryAIInput = {
     risk: string
     recommendation: string
   }>
+  preferredCoursePlatforms: string[]
 }
 
 type GeminiGenerateContentResponse = {
@@ -304,9 +306,10 @@ const AI_SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['title', 'platform', 'level', 'reason', 'matchSkill'],
+        required: ['title', 'url', 'platform', 'level', 'reason', 'matchSkill'],
         properties: {
           title: { type: 'string', description: 'Real-world IT course title (e.g. from Inflearn, Udemy, etc)' },
+          url: { type: 'string', description: 'A realistic or search URL pointing to the course (e.g., https://www.inflearn.com/courses?s=... or udemy/fastcampus search url)' },
           platform: { type: 'string', description: 'e.g., 인프런, 패스트캠퍼스, 유데미, 공식문서' },
           level: { type: 'string', description: 'e.g., 입문, 중급, 실전' },
           reason: { type: 'string', description: 'Specific reason for recommending this course based on their gaps' },
@@ -464,13 +467,14 @@ function buildGeminiPrompt(input: RepositoryAIInput) {
     'Use this rubric: naming evaluates semantic identifiers; singleResponsibility evaluates job boundaries; complexity evaluates control-flow burden; errorHandling evaluates explicit/safe failure handling; validation evaluates guard clauses; modularity evaluates separation of concerns.',
     'Analyze the gaps and weak areas of the codebase.',
     'Recommend exactly 3 real-world IT online courses (e.g., from 인프런, 패스트캠퍼스, 유데미, 프로그래머스) or official frameworks docs that can directly help the developer close their concept gaps or improve their weakest metric.',
-    'Return this in recommendedCourses. Include the exact Korean title of the course, platform, level, reason for recommendation, and the specific matchSkill.',
+    'Recommend courses only from preferredCoursePlatforms in the payload.',
+    'Return this in recommendedCourses. Include the exact Korean title of the course, url, platform, level, reason for recommendation, and the specific matchSkill.',
     'Write every output string in natural, dry, professional Korean (건조한 사무적 어투).',
     'Return only valid JSON that matches the provided schema.',
     '',
     'Repository evidence JSON:',
     JSON.stringify(buildPromptPayload(input), null, 2),
-  ].join('\\n')
+  ].join('\n')
 }
 
 function buildPromptPayload(input: RepositoryAIInput) {
@@ -494,6 +498,7 @@ function buildPromptPayload(input: RepositoryAIInput) {
     metrics: input.metrics,
     marketFits: input.marketFits,
     repositorySignals: input.repositorySignals,
+    preferredCoursePlatforms: input.preferredCoursePlatforms,
     codebaseProfile: input.codebaseProfile,
     contributors: input.contributorInsights.map((item) => ({
       name: item.name,
@@ -610,6 +615,7 @@ function parseAIEnhancement(rawText: string, model: string): RepositoryAIEnhance
     })),
     recommendedCourses: parsed.recommendedCourses.map((item) => ({
       title: item.title.trim(),
+      url: item.url.trim(),
       platform: item.platform.trim(),
       level: item.level.trim(),
       reason: item.reason.trim(),
@@ -681,6 +687,7 @@ function isAIEnhancementShape(value: unknown): value is {
   }>
   recommendedCourses: Array<{
     title: string
+    url: string
     platform: string
     level: string
     reason: string
@@ -731,6 +738,7 @@ function isAIEnhancementShape(value: unknown): value is {
     (item) =>
       isRecord(item) &&
       typeof item.title === 'string' &&
+      typeof item.url === 'string' &&
       typeof item.platform === 'string' &&
       typeof item.level === 'string' &&
       typeof item.reason === 'string' &&

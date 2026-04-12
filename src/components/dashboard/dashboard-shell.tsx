@@ -52,6 +52,8 @@ const metricLabelMap: Record<MetricKey, string> = {
   consistency: '일관성',
   modernity: '현대성',
 }
+const coursePlatformOptions = ['인프런', '유데미', '프로그래머스', '공식문서'] as const
+const defaultCoursePlatforms: Array<(typeof coursePlatformOptions)[number]> = ['인프런', '유데미', '프로그래머스']
 
 export function DashboardShell() {
   const [repoInput, setRepoInput] = useState('')
@@ -61,6 +63,7 @@ export function DashboardShell() {
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview')
   const [activeModal, setActiveModal] = useState<DetailModalKey>(null)
   const [isRetryingAI, setIsRetryingAI] = useState(false)
+  const [selectedCoursePlatforms, setSelectedCoursePlatforms] = useState<Array<(typeof coursePlatformOptions)[number]>>(defaultCoursePlatforms)
 
   const summaryStats = useMemo(() => {
     if (!analysis) {
@@ -93,7 +96,10 @@ export function DashboardShell() {
       const response = await fetch('/api/analyze-repo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repo: repoInput }),
+        body: JSON.stringify({
+          repo: repoInput,
+          coursePlatforms: selectedCoursePlatforms,
+        }),
       })
 
       const payload = (await response.json()) as DashboardAnalysis | { error?: string }
@@ -121,7 +127,10 @@ export function DashboardShell() {
       const response = await fetch('/api/analyze-repo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repo: repoInput }),
+        body: JSON.stringify({
+          repo: repoInput,
+          coursePlatforms: selectedCoursePlatforms,
+        }),
       })
       const payload = await response.json()
       if (response.ok && !('error' in payload)) {
@@ -172,6 +181,43 @@ export function DashboardShell() {
               {isLoading ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />분석 중</span> : '저장소 분석'}
             </Button>
           </form>
+
+          <div className="mt-4 rounded-2xl border border-[#eadfdb] bg-[#fffdfb] p-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">강의 사이트 선택</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {coursePlatformOptions.map((platform) => {
+                const selected = selectedCoursePlatforms.includes(platform)
+                return (
+                  <button
+                    key={platform}
+                    type="button"
+                    onClick={() => {
+                      setSelectedCoursePlatforms((current) => {
+                        if (current.includes(platform)) {
+                          if (current.length === 1) {
+                            return current
+                          }
+                          return current.filter((item) => item !== platform)
+                        }
+                        return [...current, platform]
+                      })
+                    }}
+                    className={cn(
+                      'rounded-full px-3 py-1 text-xs font-semibold transition-colors',
+                      selected
+                        ? 'bg-emerald-100 text-emerald-800 ring-1 ring-emerald-300'
+                        : 'bg-slate-100 text-slate-600 ring-1 ring-slate-200 hover:bg-slate-200',
+                    )}
+                  >
+                    {platform}
+                  </button>
+                )
+              })}
+            </div>
+            <p className="mt-2 text-xs text-slate-500">
+              선택한 사이트에서만 추천 강의를 제안합니다. 최소 1개는 선택되어야 합니다.
+            </p>
+          </div>
 
           {error ? (
             <div className="mt-4 rounded-[24px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600">
@@ -350,23 +396,56 @@ export function DashboardShell() {
 
                     return (
                       <div className="grid gap-4 md:grid-cols-3">
-                        {courses.map((course, idx) => (
-                          <article key={idx} className="rounded-2xl border border-emerald-100 bg-white p-5 shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between">
-                            <div className="space-y-3">
-                              <div className="flex items-center gap-2 flex-wrap mb-2">
-                                <span className="rounded-full bg-emerald-100 px-3 py-1 text-[11px] font-bold text-emerald-700">{course.platform}</span>
-                                <span className="rounded-full bg-slate-100 border border-slate-200 px-3 py-1 text-[11px] font-bold text-slate-600">{course.level}</span>
+                        {courses.map((course, idx) => {
+                          const courseUrl = typeof course.url === 'string' && /^https?:\/\//i.test(course.url) ? course.url : null
+
+                          return (
+                            <article key={idx} className="rounded-2xl border border-emerald-100 bg-white p-5 shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between">
+                              <div className="space-y-3">
+                                <div className="flex items-center gap-2 flex-wrap mb-2">
+                                  <span className="rounded-full bg-emerald-100 px-3 py-1 text-[11px] font-bold text-emerald-700">{course.platform}</span>
+                                  <span className="rounded-full bg-slate-100 border border-slate-200 px-3 py-1 text-[11px] font-bold text-slate-600">{course.level}</span>
+                                </div>
+                                <h4 className="text-[16px] font-bold leading-snug">
+                                  {courseUrl ? (
+                                    <a
+                                      href={courseUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="text-slate-900 hover:text-emerald-700 hover:underline underline-offset-2"
+                                    >
+                                      {course.title}
+                                    </a>
+                                  ) : (
+                                    <span className="text-slate-900">{course.title}</span>
+                                  )}
+                                </h4>
+                                <p className="text-[14px] leading-relaxed text-slate-600">{course.reason}</p>
                               </div>
-                              <h4 className="text-[16px] font-bold text-slate-900 leading-snug">{course.title}</h4>
-                              <p className="text-[14px] leading-relaxed text-slate-600">{course.reason}</p>
-                            </div>
-                            <div className="mt-4 pt-4 border-t border-slate-100">
-                              <div className="inline-flex rounded-lg bg-orange-50 px-2.5 py-1.5 text-[12px] font-semibold text-orange-700">
-                                보완 포인트: {course.matchSkill}
+                              <div className="mt-4 pt-4 border-t border-slate-100">
+                                <div className="flex items-center justify-between gap-3">
+                                  <div className="inline-flex rounded-lg bg-orange-50 px-2.5 py-1.5 text-[12px] font-semibold text-orange-700">
+                                    보완 포인트: {course.matchSkill}
+                                  </div>
+                                  {courseUrl ? (
+                                    <a
+                                      href={courseUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="inline-flex rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[12px] font-semibold text-emerald-700 hover:bg-emerald-100"
+                                    >
+                                      페이지 열기
+                                    </a>
+                                  ) : (
+                                    <span className="inline-flex rounded-lg border border-slate-200 bg-slate-100 px-2.5 py-1.5 text-[12px] font-semibold text-slate-500">
+                                      링크 준비중
+                                    </span>
+                                  )}
+                                </div>
                               </div>
-                            </div>
-                          </article>
-                        ))}
+                            </article>
+                          )
+                        })}
                       </div>
                     )
                   })()}

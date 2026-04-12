@@ -141,6 +141,7 @@ function createRecommendedCourses(seed: number): RecommendedCourse[] {
   return [
     {
       title: '실전! 스프링 부트와 JPA 활용',
+      url: 'https://www.inflearn.com/course/%EC%8A%A4%ED%94%84%EB%A7%81-%EC%9E%85%EB%AC%B8-%EC%8A%A4%ED%94%84%EB%A7%81%EB%B6%80%ED%8A%B8',
       platform: '인프런',
       level: '중급',
       reason: '현재 엔티티 설계와 데이터 접근 로직의 결합도가 높습니다. JPA를 활용한 도메인 주도 설계 패턴을 익혀보세요.',
@@ -148,6 +149,7 @@ function createRecommendedCourses(seed: number): RecommendedCourse[] {
     },
     {
       title: 'Docker & Kubernetes 올인원 패키지',
+      url: 'https://www.udemy.com/course/docker-kubernetes-the-practical-guide/',
       platform: '패스트캠퍼스',
       level: '실전',
       reason: '컨테이너 기반 배포 파이프라인 신호가 부족합니다. CI/CD 환경 구축과 무중단 배포를 경험해 보세요.',
@@ -155,6 +157,7 @@ function createRecommendedCourses(seed: number): RecommendedCourse[] {
     },
     {
       title: '테스트 주도 개발(TDD) 실무',
+      url: 'https://www.udemy.com/course/unit-testing-and-test-driven-development-in-nodejs/',
       platform: '유데미',
       level: '입문',
       reason: '전체 코드 중 테스트 커버리지가 매우 낮아 리팩토링 리스크가 큽니다. 빠른 피드백 루프를 만드는 방법을 배워보세요.',

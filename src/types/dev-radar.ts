@@ -105,6 +105,7 @@ export interface RecommendedCourse {
   level: string
   reason: string
   matchSkill: string
+  url: string
 }
 
 export interface CodebaseLanguageProfile {

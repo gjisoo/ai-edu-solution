@@ -7,7 +7,7 @@ export const maxDuration = 60
 
 export async function POST(request: Request) {
   try {
-    const payload = (await request.json()) as { repo?: string }
+    const payload = (await request.json()) as { repo?: string; coursePlatforms?: string[] }
 
     if (!payload.repo || typeof payload.repo !== 'string') {
       return NextResponse.json(
@@ -16,7 +16,9 @@ export async function POST(request: Request) {
       )
     }
 
-    const analysis = await analyzeGitHubRepository(payload.repo)
+    const analysis = await analyzeGitHubRepository(payload.repo, {
+      preferredCoursePlatforms: payload.coursePlatforms,
+    })
 
     return NextResponse.json(analysis)
   } catch (error) {
