@@ -2004,66 +2004,52 @@ function evaluateContributorCodeQuality(
   const hasTestKeyword = signal.messages.some((message) => /\b(test|jest|vitest|pytest|cypress|playwright)\b/i.test(message))
   const hasFixKeyword = signal.messages.some((message) => /\b(fix|bug|hotfix|patch|security)\b/i.test(message))
 
-  let changeScope = 84
-  if (avgChangesPerCommit > 650) {
-    changeScope -= 34
-  } else if (avgChangesPerCommit > 350) {
-    changeScope -= 22
-  } else if (avgChangesPerCommit > 200) {
-    changeScope -= 12
-  } else if (avgChangesPerCommit < 20 && signal.recentCommitCount > 0) {
-    changeScope -= 6
-  } else {
-    changeScope += 4
-  }
-  if (filesPerCommit > 16) {
-    changeScope -= 13
-  } else if (filesPerCommit >= 2 && filesPerCommit <= 10) {
-    changeScope += 5
-  }
-  if (signal.largeChangeCommitCount >= 2) {
-    changeScope -= 8
-  }
-  changeScope = clamp(Math.round(changeScope), 20, 100)
+  let naming = 56 + Math.round(meaningfulRatio * 20)
+  if (genericCount === 0 && commitCount > 0) naming += 10
+  if (signal.docFileTouches > 0) naming += 8
+  naming = clamp(Math.round(naming), 40, 100)
 
-  let testDiscipline = 34 + Math.round(testRatio * 82)
-  if (hasTestKeyword) {
-    testDiscipline += 8
-  }
-  if (signal.configFileTouches > 0) {
-    testDiscipline += 6
-  }
-  if (signal.totalChanges > 1200 && signal.testFileTouches === 0) {
-    testDiscipline -= 14
-  }
-  testDiscipline = clamp(Math.round(testDiscipline), 15, 100)
+  let singleResponsibility = 80
+  if (filesPerCommit > 20) singleResponsibility -= 20
+  else if (filesPerCommit > 10) singleResponsibility -= 10
+  else if (filesPerCommit >= 2 && filesPerCommit <= 5) singleResponsibility += 10
+  if (signal.largeChangeCommitCount >= 2) singleResponsibility -= 15
+  singleResponsibility = clamp(Math.round(singleResponsibility), 20, 100)
 
-  let riskControl = 52
-  riskControl += Math.min(12, signal.errorHandlingSignals * 2)
-  riskControl += Math.min(10, signal.validationSignals * 2)
-  riskControl -= Math.min(18, signal.anyTypeSignals * 2)
-  if (hasFixKeyword) {
-    riskControl += 6
-  }
-  if (signal.largeChangeCommitCount > 1) {
-    riskControl -= 8
-  }
-  riskControl = clamp(Math.round(riskControl), 15, 100)
+  let complexity = 85
+  if (avgChangesPerCommit > 500) complexity -= 25
+  else if (avgChangesPerCommit > 200) complexity -= 15
+  if (signal.largeChangeCommitCount > 1) complexity -= 15
+  if (hasFixKeyword) complexity += 5
+  complexity = clamp(Math.round(complexity), 20, 100)
 
-  let consistency = 48 + Math.round(meaningfulRatio * 30)
-  if (signal.docFileTouches > 0) {
-    consistency += 6
-  }
-  if (signal.recentCommitCount >= 3) {
-    consistency += 6
-  }
-  if (signal.messages.length > 0 && genericCount / signal.messages.length >= 0.6) {
-    consistency -= 8
-  }
-  consistency = clamp(Math.round(consistency), 15, 100)
+  let errorHandling = 50
+  errorHandling += Math.min(25, signal.errorHandlingSignals * 3)
+  if (signal.configFileTouches > 0) errorHandling += 5
+  if (hasFixKeyword) errorHandling += 10
+  errorHandling -= Math.min(15, signal.anyTypeSignals * 2)
+  errorHandling = clamp(Math.round(errorHandling), 20, 100)
+
+  let validation = 50
+  validation += Math.min(25, signal.validationSignals * 3)
+  validation += Math.min(15, signal.testFileTouches * 2)
+  if (hasFixKeyword) validation += 5
+  validation = clamp(Math.round(validation), 20, 100)
+
+  let modularity = 40 + Math.round(testRatio * 20)
+  if (filesTouched > 10 && signal.totalChanges < 500) modularity += 15
+  if (signal.testFileTouches > 0) modularity += 15
+  modularity = clamp(Math.round(modularity), 20, 100)
 
   const score = clamp(
-    Math.round(changeScope * 0.29 + testDiscipline * 0.26 + riskControl * 0.27 + consistency * 0.18),
+    Math.round(
+      naming * 0.15 +
+      singleResponsibility * 0.2 +
+      complexity * 0.2 +
+      errorHandling * 0.15 +
+      validation * 0.15 +
+      modularity * 0.15
+    ),
     0,
     100,
   )
@@ -2072,26 +2058,30 @@ function evaluateContributorCodeQuality(
     .slice(0, 3)
     .map(([path, stats]) => `${path} (변경 ${stats.changes}줄, 터치 ${stats.touches}회)`)
   const breakdownEntries = [
-    { key: 'changeScope', label: '변경 범위 제어', score: changeScope },
-    { key: 'testDiscipline', label: '테스트 동반성', score: testDiscipline },
-    { key: 'riskControl', label: '리스크 제어', score: riskControl },
-    { key: 'consistency', label: '일관성', score: consistency },
+    { key: 'naming', label: '네이밍', score: naming },
+    { key: 'singleResponsibility', label: '단일 책임', score: singleResponsibility },
+    { key: 'complexity', label: '복잡도', score: complexity },
+    { key: 'errorHandling', label: '에러 처리', score: errorHandling },
+    { key: 'validation', label: '입력 검증', score: validation },
+    { key: 'modularity', label: '모듈화', score: modularity },
   ] as const
   const weakest = breakdownEntries.reduce((lowest, current) => (current.score < lowest.score ? current : lowest))
   const strengths = buildContributorStrengths({
     focusArea,
     totalContributions: signal.totalContributions,
     recentCommitCount: signal.recentCommitCount,
-    breakdown: { changeScope, testDiscipline, riskControl, consistency },
+    breakdown: { naming, singleResponsibility, complexity, errorHandling, validation, modularity },
   })
 
   return {
     score,
     breakdown: {
-      changeScope,
-      testDiscipline,
-      riskControl,
-      consistency,
+      naming,
+      singleResponsibility,
+      complexity,
+      errorHandling,
+      validation,
+      modularity,
     },
     summary: `${weakest.label} 점수가 상대적으로 낮아 이 구간 보완이 필요합니다.`,
     evidence: evidence.length > 0 ? evidence : ['최근 커밋 diff 기반 증거가 충분하지 않습니다.'],
@@ -2101,7 +2091,6 @@ function evaluateContributorCodeQuality(
       focusArea,
       weakestKey: weakest.key,
       weakestScore: weakest.score,
-      testDiscipline,
     }),
     recommendation: buildContributorRecommendation({
       focusArea,
@@ -2116,10 +2105,12 @@ function buildContributorStrengths(input: {
   totalContributions: number | null
   recentCommitCount: number
   breakdown: {
-    changeScope: number
-    testDiscipline: number
-    riskControl: number
-    consistency: number
+    naming: number
+    singleResponsibility: number
+    complexity: number
+    errorHandling: number
+    validation: number
+    modularity: number
   }
 }) {
   const strengths: string[] = []
@@ -2130,18 +2121,12 @@ function buildContributorStrengths(input: {
   if (input.recentCommitCount >= 3) {
     strengths.push('최근 커밋 활동이 안정적으로 유지되고 있습니다.')
   }
-  if (input.breakdown.changeScope >= 75) {
-    strengths.push('변경 범위를 비교적 안정적으로 제어합니다.')
-  }
-  if (input.breakdown.testDiscipline >= 70) {
-    strengths.push('테스트 동반 신호가 충분히 확인됩니다.')
-  }
-  if (input.breakdown.riskControl >= 72) {
-    strengths.push('리스크 제어를 의식한 변경 패턴이 보입니다.')
-  }
-  if (input.breakdown.consistency >= 72) {
-    strengths.push('커밋 스타일과 변경 흐름의 일관성이 좋습니다.')
-  }
+  if (input.breakdown.naming >= 75) strengths.push('코드 네이밍 규칙과 의도 전달이 명확합니다.')
+  if (input.breakdown.singleResponsibility >= 70) strengths.push('단일 커밋/수정 범위에 걸쳐 단일 책임 원칙을 잘 지킵니다.')
+  if (input.breakdown.complexity >= 72) strengths.push('복잡도를 제어하며 간결한 코드 흐름을 유지합니다.')
+  if (input.breakdown.errorHandling >= 72) strengths.push('에러 처리와 예외 상황 대비에 신경 씁니다.')
+  if (input.breakdown.validation >= 72) strengths.push('입력 검증 및 타입 방어 로직이 탄탄합니다.')
+  if (input.breakdown.modularity >= 72) strengths.push('관심사에 맞춰 파일을 잘 모듈화하여 작업합니다.')
   if (input.focusArea !== '유지보수/전반') {
     strengths.push(`${input.focusArea} 영역에서 명확한 작업 흔적이 보입니다.`)
   }
@@ -2156,9 +2141,8 @@ function buildContributorStrengths(input: {
 function buildContributorRisk(input: {
   recentCommitCount: number
   focusArea: string
-  weakestKey: 'changeScope' | 'testDiscipline' | 'riskControl' | 'consistency'
+  weakestKey: 'naming' | 'singleResponsibility' | 'complexity' | 'errorHandling' | 'validation' | 'modularity'
   weakestScore: number
-  testDiscipline: number
 }) {
   if (input.recentCommitCount === 0) {
     return '최근 기본 브랜치 기여가 없어 현재 코드베이스 맥락이 끊길 수 있습니다.'
@@ -2166,11 +2150,14 @@ function buildContributorRisk(input: {
   if (input.recentCommitCount === 1) {
     return '최근 기여 빈도가 낮아 지식 전파와 리뷰 속도가 느려질 수 있습니다.'
   }
-  if (input.weakestKey === 'testDiscipline' && input.testDiscipline < 60) {
-    return '테스트 동반성이 낮아 배포 전 회귀 리스크가 남아 있을 수 있습니다.'
+  if (input.weakestKey === 'errorHandling' && input.weakestScore < 60) {
+    return '에러 방어 및 예외 대응 로직이 다소 약해 보입니다.'
   }
-  if (input.weakestKey === 'riskControl' && input.weakestScore < 60) {
-    return '에러/검증 패턴이 약해 장애 상황에서 복구 비용이 커질 수 있습니다.'
+  if (input.weakestKey === 'singleResponsibility' && input.weakestScore < 60) {
+    return '하나의 모듈이나 커밋에 역할이 과도하게 섞여 결합도가 높아질 리스크가 있습니다.'
+  }
+  if (input.weakestKey === 'modularity' && input.weakestScore < 60) {
+    return '로직 분리가 부족해 향후 유지보수 시 구조적 부채가 쌓일 수 있습니다.'
   }
   if (input.focusArea === '기능 개발') {
     return '기능 개발 비중이 높아 회귀 테스트 범위를 함께 확장하지 않으면 안정성 리스크가 생길 수 있습니다.'
@@ -2181,23 +2168,29 @@ function buildContributorRisk(input: {
 
 function buildContributorRecommendation(input: {
   focusArea: string
-  weakestKey: 'changeScope' | 'testDiscipline' | 'riskControl' | 'consistency'
+  weakestKey: 'naming' | 'singleResponsibility' | 'complexity' | 'errorHandling' | 'validation' | 'modularity'
   recentCommitCount: number
 }) {
   if (input.recentCommitCount === 0) {
     return '작은 유지보수 커밋이라도 정기적으로 반영해 최신 소유권 신호를 회복하세요.'
   }
-  if (input.weakestKey === 'changeScope') {
-    return '커밋/PR 단위를 더 작게 나눠 리뷰 가능성과 회귀 추적성을 높이세요.'
+  if (input.weakestKey === 'singleResponsibility') {
+    return '커밋과 파일 단위에서 역할과 책임을 명확히 나누는 것을 최우선으로 시도해 보세요.'
   }
-  if (input.weakestKey === 'testDiscipline') {
-    return '핵심 변경 경로에 단위 또는 통합 테스트를 함께 추가하고 CI에서 강제하세요.'
+  if (input.weakestKey === 'complexity') {
+    return '복잡도가 높은 함수나 파일을 조기 반환(Early Return) 패턴 등을 통해 분리해 보세요.'
   }
-  if (input.weakestKey === 'riskControl') {
-    return '실패 경로(예외/검증) 코드를 먼저 보강해 운영 리스크를 줄이세요.'
+  if (input.weakestKey === 'errorHandling') {
+    return '실패 경로(예외 상황) 방어 로직을 먼저 작성해 운영 리스크를 줄이세요.'
   }
-  if (input.weakestKey === 'consistency') {
-    return '커밋 메시지 규칙과 변경 템플릿을 통일해 협업 가독성을 높이세요.'
+  if (input.weakestKey === 'modularity') {
+    return '독립적으로 꺼낼 수 있는 비즈니스 로직이나 유틸 함수를 분리하여 재사용성을 높이세요.'
+  }
+  if (input.weakestKey === 'validation') {
+    return '입력값과 외부 의존성 경계에서 타입 및 유효성 검사 로직을 보강하세요.'
+  }
+  if (input.weakestKey === 'naming') {
+    return '변수나 함수의 이름을 좀 더 구체적이고 의도가 드러나도록 리팩토링해 보세요.'
   }
   if (input.focusArea === '테스트/품질') {
     return '테스트 커버리지를 CI 게이트와 연결해 팀 전체의 품질 기준으로 고정하세요.'

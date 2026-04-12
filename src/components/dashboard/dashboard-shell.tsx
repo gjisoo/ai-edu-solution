@@ -33,7 +33,7 @@ import { parseGitHubRepositoryInput } from '@/lib/github/parse-repo-input'
 import { cn } from '@/lib/utils'
 import type { DashboardAnalysis, DevMetric, MetricKey } from '@/types/dev-radar'
 
-type DashboardTab = 'overview' | 'clean-code' | 'market-fit' | 'gaps' | 'contributors' | 'activity'
+type DashboardTab = 'overview' | 'clean-code' | 'market-fit' | 'gaps'
 type DetailModalKey = 'repo' | 'metrics' | null
 
 const dashboardTabs: Array<{ key: DashboardTab; label: string; description: string }> = [
@@ -41,8 +41,6 @@ const dashboardTabs: Array<{ key: DashboardTab; label: string; description: stri
   { key: 'clean-code', label: '코드 품질 지수', description: '실무 관점의 코드 품질을 확인합니다.' },
   { key: 'market-fit', label: '직무/실무 적합도', description: '직무 요구사항 대비 내 현황을 봅니다.' },
   { key: 'gaps', label: '집중 성장 포인트', description: '우선적으로 보완할 핵심 역량을 파악합니다.' },
-  { key: 'contributors', label: '기여자 분석', description: '협업 저장소의 사람별 신호를 봅니다.' },
-  { key: 'activity', label: '활동 로그', description: '최근 분석 흐름을 봅니다.' },
 ]
 
 const marketFitLabels = ['프론트엔드 / 풀스택', '백엔드', '플랫폼 / DevOps']
@@ -175,12 +173,6 @@ export function DashboardShell() {
             </Button>
           </form>
 
-          <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-500">
-            <span>입력 예시: `owner/repo` 또는 GitHub URL</span>
-            <span>공개 저장소는 바로 분석됩니다.</span>
-            <span>GITHUB_TOKEN이 있으면 호출 한도가 더 안정적입니다.</span>
-          </div>
-
           {error ? (
             <div className="mt-4 rounded-[24px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600">
               <div className="flex items-start gap-2">
@@ -234,7 +226,7 @@ export function DashboardShell() {
                 value={summaryStats.contributorCount}
                 unit="명"
                 hint="협업 역할 흐름"
-                onClick={() => setActiveTab('contributors')}
+                onClick={() => setActiveTab('clean-code')}
               />
             </section>
 
@@ -336,9 +328,9 @@ export function DashboardShell() {
 
               <Card className="border-white/70 bg-white/84">
                 <CardContent className="p-5 sm:p-6">
-                  {renderTabContent({ 
-                    activeTab, 
-                    analysis, 
+                  {renderTabContent({
+                    activeTab,
+                    analysis,
                     onOpenModal: setActiveModal,
                     onRetryAI: retryAIAnalysis,
                     isRetryingAI
@@ -536,9 +528,10 @@ function renderTabContent({
 
   if (activeTab === 'clean-code') {
     return (
-      <CleanCodeEvaluationCard 
-        cleanCodeEvaluation={analysis.cleanCodeEvaluation} 
-        model={analysis.engine.model} 
+      <CleanCodeEvaluationCard
+        cleanCodeEvaluation={analysis.cleanCodeEvaluation}
+        contributorInsights={analysis.contributorInsights}
+        model={analysis.engine.model}
         onRetry={onRetryAI}
         isRetrying={isRetryingAI}
       />
@@ -582,108 +575,7 @@ function renderTabContent({
     )
   }
 
-  if (activeTab === 'contributors') {
-    return (
-      <div className="space-y-4">
-        <SectionTitle title="기여자별 코드 품질 분석" description="최근 커밋 diff와 파일 변경 근거로 사람별 코드 품질을 계산합니다." />
-        {analysis.contributorInsights.length > 0 ? (
-          <div className="grid gap-4">
-            {analysis.contributorInsights.map((contributor) => (
-              <article key={contributor.id} className="rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-5 shadow-sm">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <strong className="text-lg text-slate-900">
-                      {contributor.handle ? `@${contributor.handle}` : contributor.name}
-                    </strong>
-                    <p className="mt-1 text-sm text-slate-600">{contributor.name}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="rounded-full bg-[#f4efff] px-3 py-1 text-xs font-semibold text-[#7163ea]">
-                      {contributor.focusArea}
-                    </span>
-                    <span className={cn('rounded-full px-3 py-1 text-xs font-bold', getQualityScoreClassName(contributor.codeQualityScore))}>
-                      코드 품질 {contributor.codeQualityScore}점
-                    </span>
-                  </div>
-                </div>
 
-                <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                  <InlineInfo label="최근 커밋" value={`${contributor.recentCommitCount}건`} />
-                  <InlineInfo label="누적 기여" value={formatContributionCount(contributor.totalContributions)} />
-                  <InlineInfo label="최근 활동" value={formatDateLabel(contributor.recentCommitAt ?? '')} />
-                </div>
-
-                <div className="mt-4 rounded-2xl border border-[#eadfdb] bg-white px-3 py-3">
-                  <p className="text-xs uppercase tracking-[0.16em] text-slate-400">코드 품질 요약</p>
-                  <p className="mt-2 text-sm leading-6 text-slate-700">{contributor.codeQualitySummary}</p>
-                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                    <div>
-                      <div className="flex items-center justify-between text-xs text-slate-500">
-                        <span>변경 범위 제어</span>
-                        <span>{contributor.codeQualityBreakdown.changeScope}점</span>
-                      </div>
-                      <Progress value={contributor.codeQualityBreakdown.changeScope} className="mt-1.5 h-2" indicatorClassName="bg-gradient-to-r from-[#8c7df8] to-[#7d6fff]" />
-                    </div>
-                    <div>
-                      <div className="flex items-center justify-between text-xs text-slate-500">
-                        <span>테스트 동반성</span>
-                        <span>{contributor.codeQualityBreakdown.testDiscipline}점</span>
-                      </div>
-                      <Progress value={contributor.codeQualityBreakdown.testDiscipline} className="mt-1.5 h-2" indicatorClassName="bg-gradient-to-r from-[#7ed9c3] to-[#59b8a0]" />
-                    </div>
-                    <div>
-                      <div className="flex items-center justify-between text-xs text-slate-500">
-                        <span>리스크 제어</span>
-                        <span>{contributor.codeQualityBreakdown.riskControl}점</span>
-                      </div>
-                      <Progress value={contributor.codeQualityBreakdown.riskControl} className="mt-1.5 h-2" indicatorClassName="bg-gradient-to-r from-[#f59f7b] to-[#ec7e5b]" />
-                    </div>
-                    <div>
-                      <div className="flex items-center justify-between text-xs text-slate-500">
-                        <span>일관성</span>
-                        <span>{contributor.codeQualityBreakdown.consistency}점</span>
-                      </div>
-                      <Progress value={contributor.codeQualityBreakdown.consistency} className="mt-1.5 h-2" indicatorClassName="bg-gradient-to-r from-[#6fb3ff] to-[#4f97ea]" />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-4 rounded-2xl border border-[#eadfdb] bg-white px-3 py-3">
-                  <p className="text-xs uppercase tracking-[0.16em] text-slate-400">강점</p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {contributor.strengths.map((strength) => (
-                      <span key={strength} className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
-                        {strength}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="mt-3 rounded-2xl border border-[#eadfdb] bg-white px-3 py-3">
-                  <p className="text-xs uppercase tracking-[0.16em] text-slate-400">코드 근거</p>
-                  <div className="mt-2 grid gap-2">
-                    {contributor.evidence.map((item) => (
-                      <p key={item} className="text-sm leading-6 text-slate-700">{item}</p>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="mt-3 rounded-2xl border border-[#eadfdb] bg-white px-3 py-3">
-                  <p className="text-xs uppercase tracking-[0.16em] text-slate-400">리스크</p>
-                  <p className="mt-2 text-sm leading-6 text-slate-700">{contributor.risk}</p>
-                </div>
-                <div className="mt-3 rounded-2xl bg-[#fff4ea] px-3 py-2 text-sm text-slate-700">
-                  권장 액션: {contributor.recommendation}
-                </div>
-              </article>
-            ))}
-          </div>
-        ) : (
-          <EmptyDetailMessage message="기여자 정보를 수집하지 못했습니다." />
-        )}
-      </div>
-    )
-  }
 
   if (activeTab === 'gaps') {
     return (
@@ -707,24 +599,7 @@ function renderTabContent({
     )
   }
 
-  return (
-    <div className="space-y-4">
-      <SectionTitle title="최근 활동 로그" description="현재 페이지를 벗어나지 않고 최근 분석 이력만 간단히 확인합니다." />
-      <div className="grid gap-3">
-        {analysis.activity.map((event) => (
-          <article key={event.id} className="grid gap-3 rounded-[24px] border border-[#eadfdb] bg-[#fffdfb] p-4 shadow-sm sm:grid-cols-[96px_1fr]">
-            <span className="inline-flex h-fit items-center justify-center rounded-full bg-[#f4efff] px-3 py-1 text-xs font-semibold text-[#7163ea]">
-              {event.time}
-            </span>
-            <div>
-              <strong className="text-slate-900">{event.label}</strong>
-              <p className="mt-2 text-sm leading-6 text-slate-600">{event.detail}</p>
-            </div>
-          </article>
-        ))}
-      </div>
-    </div>
-  )
+  return null
 }
 
 function SectionTitle({ title, description }: { title: string; description: string }) {

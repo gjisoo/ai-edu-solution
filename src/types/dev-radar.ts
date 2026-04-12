@@ -129,10 +129,12 @@ export interface ContributorInsight {
   codeQualityScore: number
   codeQualitySummary: string
   codeQualityBreakdown: {
-    changeScope: number
-    testDiscipline: number
-    riskControl: number
-    consistency: number
+    naming: number
+    singleResponsibility: number
+    complexity: number
+    errorHandling: number
+    validation: number
+    modularity: number
   }
   evidence: string[]
   strengths: string[]

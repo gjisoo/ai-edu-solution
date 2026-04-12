@@ -209,10 +209,12 @@ function createContributorInsights(seed: number): ContributorInsight[] {
             ? '테스트/품질 변경 비중이 높아 회귀 예방 신호가 강합니다.'
             : '리팩토링 품질은 양호하나 변경 근거를 커밋 단위로 더 명확히 남기면 리뷰 효율이 좋아집니다.',
       codeQualityBreakdown: {
-        changeScope: clamp(66 + ((seed + index * 9) % 28), 0, 100),
-        testDiscipline: clamp(62 + ((seed + index * 7) % 30), 0, 100),
-        riskControl: clamp(64 + ((seed + index * 11) % 27), 0, 100),
-        consistency: clamp(67 + ((seed + index * 5) % 25), 0, 100),
+        naming: clamp(66 + ((seed + index * 9) % 28), 0, 100),
+        singleResponsibility: clamp(62 + ((seed + index * 7) % 30), 0, 100),
+        complexity: clamp(64 + ((seed + index * 11) % 27), 0, 100),
+        errorHandling: clamp(67 + ((seed + index * 5) % 25), 0, 100),
+        validation: clamp(65 + ((seed + index * 3) % 26), 0, 100),
+        modularity: clamp(63 + ((seed + index * 8) % 29), 0, 100),
       },
       evidence: [
         'src/app/dashboard/page.tsx 변경에서 UI 상태 분리 커밋이 확인됩니다.',
