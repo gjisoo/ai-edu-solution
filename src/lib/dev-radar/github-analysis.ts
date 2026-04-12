@@ -7,7 +7,12 @@ import { generateRepositoryAIEnhancement } from '@/lib/dev-radar/gemini-analysis
 import { parseGitHubRepositoryInput } from '@/lib/github/parse-repo-input'
 import type {
   ActivityEvent,
+  AIInsight,
+  CleanCodeCriterionKey,
+  CleanCodeEvaluation,
+  CodebaseProfile,
   ConceptGap,
+  ContributorInsight,
   DashboardAnalysis,
   DevMetric,
   MarketFit,
@@ -92,11 +97,29 @@ const CODE_FILE_LANGUAGES: Record<string, string> = {
   '.rb': 'Ruby',
   '.php': 'PHP',
 }
-const MAX_CODE_SAMPLE_LINES = 500
-const MAX_CODE_SAMPLE_CHARS = 20000
+const MAX_CODE_SAMPLE_LINES = 180
+const MAX_CODE_SAMPLE_CHARS = 4200
+const MAX_CODE_SAMPLES = 48
+const MAX_SAMPLES_PER_DIRECTORY = 6
+const MAX_SAMPLES_PER_LANGUAGE = 10
+const MAX_TOTAL_SAMPLE_CHARS = 150000
 const MAX_WORKFLOW_FILES = 8
 const WORKFLOW_FILE_PATTERN = /\.(ya?ml)$/i
-const MAX_TOTAL_CHARS = 300000
+const MAX_CONTRIBUTOR_COUNT = 8
+const MAX_COMMIT_DETAIL_COMMITS = MAX_COMMITS
+const MAX_COMMIT_FILES_FOR_QUALITY = 80
+const HEURISTIC_CLEAN_CODE_CRITERIA: Array<{
+  key: CleanCodeCriterionKey
+  label: string
+  weight: number
+}> = [
+  { key: 'naming', label: '네이밍', weight: 0.2 },
+  { key: 'singleResponsibility', label: '단일 책임', weight: 0.2 },
+  { key: 'complexity', label: '복잡도', weight: 0.16 },
+  { key: 'errorHandling', label: '에러 처리', weight: 0.15 },
+  { key: 'validation', label: '입력 검증', weight: 0.14 },
+  { key: 'modularity', label: '모듈화', weight: 0.15 },
+]
 
 type GitHubRepositoryResponse = {
   name: string
@@ -131,6 +154,50 @@ type GitHubCommitResponse = {
   author: {
     login: string
   } | null
+}
+
+type GitHubContributorResponse = {
+  login?: string
+  contributions?: number
+  type?: string
+}
+
+type GitHubCommitDetailResponse = {
+  sha: string
+  commit: {
+    message: string
+    author: {
+      name: string
+      email: string
+      date: string
+    } | null
+  }
+  author: {
+    login: string
+  } | null
+  files?: Array<{
+    filename: string
+    status?: string
+    additions?: number
+    deletions?: number
+    changes?: number
+    patch?: string
+  }>
+}
+
+type RecentCommitDetail = {
+  sha: string
+  message: string
+  authorName: string
+  authorHandle: string | null
+  date: string | null
+  files: Array<{
+    path: string
+    additions: number
+    deletions: number
+    changes: number
+    patch: string | null
+  }>
 }
 
 
@@ -182,14 +249,19 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
   const repositoryPath = `/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}`
   const repository = await fetchGitHubJson<GitHubRepositoryResponse>(repositoryPath)
 
-  const [languages, commits, { rootFileContents, workflowSignals, codeSamples, rootContents }] = await Promise.all([
+  const [languages, commits, contributors, { rootFileContents, workflowSignals, codeSamples, rootContents, codebaseProfile }] = await Promise.all([
     fetchGitHubJson<Record<string, number>>(`${repositoryPath}/languages`),
     fetchGitHubJson<GitHubCommitResponse[]>(
       `${repositoryPath}/commits?per_page=${MAX_COMMITS}&sha=${encodeURIComponent(repository.default_branch)}`,
       { fallbackValue: [] },
     ),
-    downloadAndExtractTarball(repositoryPath, repository.default_branch)
+    fetchGitHubJson<GitHubContributorResponse[]>(
+      `${repositoryPath}/contributors?per_page=${MAX_CONTRIBUTOR_COUNT}`,
+      { fallbackValue: [] },
+    ),
+    downloadAndExtractTarball(repositoryPath, repository.default_branch),
   ])
+  const recentCommitDetails = await fetchRecentCommitDetails(repositoryPath, commits)
   const packageManifest = parsePackageManifest(rootFileContents['package.json'] ?? null)
   const packageScripts = extractPackageScripts(packageManifest)
   const frameworks = detectFrameworks({
@@ -214,6 +286,20 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
   const reviewSuggestions = buildReviewSuggestions(repositorySignals)
   const conceptGaps = buildConceptGaps(repositorySignals)
   const activity = buildActivity(repositorySignals)
+  const collectedAtDate = new Date()
+  const collectedAt = formatDateTime(collectedAtDate)
+  const contributorInsights = buildContributorInsights({
+    contributors,
+    commits,
+    recentCommitDetails,
+    collectedAt: collectedAtDate.toISOString(),
+  })
+  const fallbackCleanCodeEvaluation = buildHeuristicCleanCodeEvaluation(metrics, repositorySignals)
+  const fallbackAIInsight = buildHeuristicAIInsight({
+    metrics,
+    reviewSuggestions,
+    conceptGaps,
+  })
   const heuristicAnalysis: DashboardAnalysis = {
     githubId: parsed.normalizedFullName,
     repository: {
@@ -233,19 +319,21 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
       updatedAt: repository.updated_at,
       topics: repository.topics ?? [],
     },
+    codebaseProfile,
+    contributorInsights,
     engine: {
       mode: 'heuristic',
       label: 'GitHub API + 규칙 기반 분석',
       model: null,
     },
-    aiInsight: null,
-    collectedAt: formatDateTime(new Date()),
+    aiInsight: fallbackAIInsight,
+    collectedAt,
     dailyLines: estimateDailyLines(repository.size, commits.length, repositorySignals.daysSinceLastPush),
-    cleanCodeScore: calculateCleanCodeScore(metrics),
+    cleanCodeScore: fallbackCleanCodeEvaluation.score,
     focusArea: describeWeakestMetric(metrics),
     metrics,
     metricBreakdown,
-    cleanCodeEvaluation: null,
+    cleanCodeEvaluation: fallbackCleanCodeEvaluation,
     marketFits,
     conceptGaps,
     reviewSuggestions,
@@ -279,6 +367,18 @@ export async function analyzeGitHubRepository(input: string): Promise<DashboardA
       date: commit.commit.author?.date ?? null,
     })),
     codeSamples,
+    codebaseProfile,
+    contributorInsights: contributorInsights.map((item) => ({
+      name: item.name,
+      handle: item.handle,
+      totalContributions: item.totalContributions,
+      recentCommitCount: item.recentCommitCount,
+      focusArea: item.focusArea,
+      codeQualityScore: item.codeQualityScore,
+      codeQualitySummary: item.codeQualitySummary,
+      risk: item.risk,
+      recommendation: item.recommendation,
+    })),
   })
 
   if (!aiEnhancement) {
@@ -382,7 +482,7 @@ function buildRepositoryCodeSample(path: string, text: string | null): Repositor
 
   return {
     path,
-    language: detectCodeSampleLanguage(path),
+    language: detectCodeLanguage(path),
     snippet,
     truncated: index < lines.length,
   }
@@ -408,6 +508,46 @@ async function fetchGitHubJson<T>(
   }
 
   return response.json() as Promise<T>
+}
+
+async function fetchRecentCommitDetails(repositoryPath: string, commits: GitHubCommitResponse[]) {
+  const targets = commits.slice(0, MAX_COMMIT_DETAIL_COMMITS)
+
+  if (targets.length === 0) {
+    return []
+  }
+
+  const settled = await Promise.allSettled(
+    targets.map(async (commit): Promise<RecentCommitDetail> => {
+      const payload = await fetchGitHubJson<GitHubCommitDetailResponse>(
+        `${repositoryPath}/commits/${encodeURIComponent(commit.sha)}`,
+      )
+
+      const files = (payload.files ?? [])
+        .slice(0, MAX_COMMIT_FILES_FOR_QUALITY)
+        .map((file) => ({
+          path: file.filename,
+          additions: file.additions ?? 0,
+          deletions: file.deletions ?? 0,
+          changes: file.changes ?? (file.additions ?? 0) + (file.deletions ?? 0),
+          patch: typeof file.patch === 'string' ? file.patch : null,
+        }))
+        .filter((file) => file.path.trim().length > 0)
+
+      return {
+        sha: payload.sha,
+        message: firstLine(payload.commit.message),
+        authorName: payload.commit.author?.name?.trim() || payload.author?.login || '알 수 없는 기여자',
+        authorHandle: payload.author?.login ?? null,
+        date: payload.commit.author?.date ?? null,
+        files,
+      }
+    }),
+  )
+
+  return settled
+    .filter((result): result is PromiseFulfilledResult<RecentCommitDetail> => result.status === 'fulfilled')
+    .map((result) => result.value)
 }
 
 function buildGitHubHeaders() {
@@ -540,8 +680,43 @@ function isCodeSampleCandidate(path: string) {
   return true
 }
 
-function detectCodeSampleLanguage(path: string) {
+function detectCodeLanguage(path: string) {
   return CODE_FILE_LANGUAGES[getPathExtension(path.toLowerCase())] ?? 'Code'
+}
+
+function countCodeLines(text: string) {
+  if (!text.trim()) {
+    return 0
+  }
+
+  return text.replace(/\r\n?/g, '\n').split('\n').length
+}
+
+function getDirectoryBucket(path: string) {
+  const segments = path.split('/').filter(Boolean)
+  return segments.length <= 1 ? '(root)' : segments[0]
+}
+
+function incrementNumberMap(map: Map<string, number>, key: string, amount: number) {
+  map.set(key, (map.get(key) ?? 0) + amount)
+}
+
+function incrementLanguageHistogram(
+  map: Map<string, { files: number; lines: number }>,
+  language: string,
+  lineCount: number,
+) {
+  const current = map.get(language)
+
+  if (!current) {
+    map.set(language, { files: 1, lines: lineCount })
+    return
+  }
+
+  map.set(language, {
+    files: current.files + 1,
+    lines: current.lines + lineCount,
+  })
 }
 
 function getPathExtension(path: string) {
@@ -1425,6 +1600,675 @@ function buildActivity(signals: ReturnType<typeof buildRepositorySignals>): Acti
   ]
 }
 
+function buildHeuristicAIInsight({
+  metrics,
+  reviewSuggestions,
+  conceptGaps,
+}: {
+  metrics: DevMetric
+  reviewSuggestions: ReviewSuggestion[]
+  conceptGaps: ConceptGap[]
+}): AIInsight {
+  const rankedMetrics = (Object.entries(metrics) as Array<[keyof DevMetric, number]>).sort(
+    (left, right) => right[1] - left[1],
+  )
+  const strongestLabel = getMetricLabel(rankedMetrics[0]?.[0] ?? 'readability')
+  const weakestLabel = getMetricLabel(rankedMetrics[rankedMetrics.length - 1]?.[0] ?? 'readability')
+  const leadingGap = conceptGaps[0]
+  const leadingSuggestion = reviewSuggestions[0]
+
+  return {
+    headline: `${strongestLabel} 강점은 유지하고 ${weakestLabel}을 우선 보강하세요.`,
+    summary:
+      leadingGap?.summary ??
+      `${weakestLabel} 지표가 상대적으로 낮아 전체 실무 신뢰도를 끌어내리고 있습니다. 개선 우선순위를 명확히 잡는 것이 좋습니다.`,
+    strengths: rankedMetrics.slice(0, 3).map(([key, score]) => `${getMetricLabel(key)} ${Math.round(score)}점`),
+    nextStep:
+      leadingGap?.recommendation ??
+      leadingSuggestion?.description ??
+      `${weakestLabel}과 연결된 핵심 모듈부터 테스트와 에러 처리 규칙을 보강하세요.`,
+  }
+}
+
+function buildHeuristicCleanCodeEvaluation(
+  metrics: DevMetric,
+  signals: ReturnType<typeof buildRepositorySignals>,
+): CleanCodeEvaluation {
+  const criterionScores: Record<CleanCodeCriterionKey, number> = {
+    naming: clamp(Math.round(metrics.readability * 0.7 + metrics.consistency * 0.3), 0, 100),
+    singleResponsibility: clamp(
+      Math.round(metrics.architecture * 0.72 + (signals.hasSourceDir ? 8 : -6)),
+      0,
+      100,
+    ),
+    complexity: clamp(
+      Math.round(metrics.efficiency * 0.6 + metrics.readability * 0.4 - (signals.repository.size > 3000 ? 6 : 0)),
+      0,
+      100,
+    ),
+    errorHandling: clamp(
+      Math.round(metrics.security * 0.68 + (signals.hasTests ? 7 : -7) + (signals.hasCi ? 5 : 0)),
+      0,
+      100,
+    ),
+    validation: clamp(
+      Math.round(metrics.security * 0.56 + metrics.consistency * 0.44 + (signals.hasTests ? 5 : 0)),
+      0,
+      100,
+    ),
+    modularity: clamp(
+      Math.round(metrics.architecture * 0.7 + metrics.consistency * 0.3 + (signals.hasSourceDir ? 6 : -4)),
+      0,
+      100,
+    ),
+  }
+
+  const criteria = HEURISTIC_CLEAN_CODE_CRITERIA.map((criterion) => ({
+    ...criterion,
+    score: criterionScores[criterion.key],
+    rationale: buildHeuristicCriterionRationale(criterion.key, criterionScores[criterion.key], signals),
+  }))
+  const score = clamp(
+    Math.round(criteria.reduce((sum, criterion) => sum + criterion.score * criterion.weight, 0)),
+    0,
+    100,
+  )
+  const weakest = criteria.reduce((lowest, current) => (current.score < lowest.score ? current : lowest))
+
+  return {
+    score,
+    formula: 'Score_clean = Σ w_i × c_i',
+    summary: `${weakest.label} 항목이 상대적으로 낮아 유지보수성 병목이 생길 수 있습니다.`,
+    criteria,
+  }
+}
+
+function buildHeuristicCriterionRationale(
+  key: CleanCodeCriterionKey,
+  score: number,
+  signals: ReturnType<typeof buildRepositorySignals>,
+) {
+  if (key === 'naming') {
+    return score >= 70
+      ? '문서와 커밋 신호가 비교적 명확해 식별자 의미를 추적하기 쉬운 편입니다.'
+      : '설명 신호가 약해 식별자 의도와 책임 경계를 파악하는 데 시간이 더 필요합니다.'
+  }
+
+  if (key === 'singleResponsibility') {
+    return signals.hasSourceDir
+      ? '소스 디렉터리 구분이 있어 역할 경계를 나누려는 구조적 의도가 보입니다.'
+      : '핵심 소스 디렉터리 경계가 약해 역할 분리 신호가 충분하지 않습니다.'
+  }
+
+  if (key === 'complexity') {
+    return signals.hasCi
+      ? '자동화 신호가 있어 복잡도 증가 시 회귀 탐지가 가능한 구조에 가깝습니다.'
+      : '자동화 검증 신호가 약해 복잡한 변경의 회귀를 조기에 포착하기 어렵습니다.'
+  }
+
+  if (key === 'errorHandling') {
+    return signals.hasTests
+      ? '테스트/검증 신호가 있어 실패 경로를 점검하는 기본선이 보입니다.'
+      : '테스트 근거가 부족해 실패 경로의 안전성을 신뢰하기 어렵습니다.'
+  }
+
+  if (key === 'validation') {
+    return signals.hasTypedLanguage
+      ? '타입 기반 신호가 있어 입력 경계 검증을 체계화하기 좋은 상태입니다.'
+      : '명시적 타입/스키마 신호가 부족해 입력 경계 검증 전략을 강화할 필요가 있습니다.'
+  }
+
+  return signals.hasSourceDir
+    ? '모듈 분리의 기본 형태는 보이지만 결합도 관리 기준을 더 선명하게 만들면 좋습니다.'
+    : '모듈 경계 정보가 제한적이어서 변경 영향 범위를 예측하기 어렵습니다.'
+}
+
+function buildContributorInsights({
+  contributors,
+  commits,
+  recentCommitDetails,
+  collectedAt,
+}: {
+  contributors: GitHubContributorResponse[]
+  commits: GitHubCommitResponse[]
+  recentCommitDetails: RecentCommitDetail[]
+  collectedAt: string
+}): ContributorInsight[] {
+  type ContributorQualitySignal = {
+    name: string
+    handle: string | null
+    totalContributions: number | null
+    recentCommitCount: number
+    recentCommitAt: string | null
+    messages: string[]
+    files: Set<string>
+    fileStats: Map<string, { touches: number; changes: number }>
+    totalChanges: number
+    testFileTouches: number
+    docFileTouches: number
+    configFileTouches: number
+    anyTypeSignals: number
+    errorHandlingSignals: number
+    validationSignals: number
+    largeChangeCommitCount: number
+  }
+
+  const merged = new Map<string, ContributorQualitySignal>()
+
+  for (const contributor of contributors) {
+    const handle = contributor.login?.trim() ?? null
+    const name = handle || '익명 기여자'
+    const key = normalizeContributorKey(handle ?? name)
+
+    merged.set(key, {
+      name,
+      handle,
+      totalContributions: typeof contributor.contributions === 'number' ? contributor.contributions : null,
+      recentCommitCount: 0,
+      recentCommitAt: null,
+      messages: [],
+      files: new Set(),
+      fileStats: new Map(),
+      totalChanges: 0,
+      testFileTouches: 0,
+      docFileTouches: 0,
+      configFileTouches: 0,
+      anyTypeSignals: 0,
+      errorHandlingSignals: 0,
+      validationSignals: 0,
+      largeChangeCommitCount: 0,
+    })
+  }
+
+  for (const detail of recentCommitDetails) {
+    const identity = detail.authorHandle ?? detail.authorName
+    const key = normalizeContributorKey(identity)
+    const current =
+      merged.get(key) ??
+      {
+        name: detail.authorName,
+        handle: detail.authorHandle,
+        totalContributions: null,
+        recentCommitCount: 0,
+        recentCommitAt: null,
+        messages: [],
+        files: new Set<string>(),
+        fileStats: new Map<string, { touches: number; changes: number }>(),
+        totalChanges: 0,
+        testFileTouches: 0,
+        docFileTouches: 0,
+        configFileTouches: 0,
+        anyTypeSignals: 0,
+        errorHandlingSignals: 0,
+        validationSignals: 0,
+        largeChangeCommitCount: 0,
+      }
+
+    const commitChangeSize = detail.files.reduce((sum, file) => sum + file.changes, 0)
+    if (commitChangeSize >= 450) {
+      current.largeChangeCommitCount += 1
+    }
+
+    if (detail.message && current.messages.length < 20) {
+      current.messages.push(detail.message)
+    }
+
+    const latest =
+      current.recentCommitAt && detail.date
+        ? new Date(current.recentCommitAt).getTime() >= new Date(detail.date).getTime()
+          ? current.recentCommitAt
+          : detail.date
+        : current.recentCommitAt ?? detail.date
+    current.recentCommitAt = latest
+    current.recentCommitCount += 1
+
+    for (const file of detail.files) {
+      const normalizedPath = file.path.toLowerCase()
+      const currentFile = current.fileStats.get(file.path)
+      current.totalChanges += file.changes
+      current.files.add(file.path)
+
+      if (!currentFile) {
+        current.fileStats.set(file.path, { touches: 1, changes: file.changes })
+      } else {
+        current.fileStats.set(file.path, {
+          touches: currentFile.touches + 1,
+          changes: currentFile.changes + file.changes,
+        })
+      }
+
+      if (isTestFilePath(normalizedPath)) {
+        current.testFileTouches += 1
+      }
+      if (isDocumentationFilePath(normalizedPath)) {
+        current.docFileTouches += 1
+      }
+      if (isConfigOrInfraFilePath(normalizedPath)) {
+        current.configFileTouches += 1
+      }
+
+      if (file.patch) {
+        current.anyTypeSignals += (file.patch.match(/\bany\b/g) ?? []).length
+        current.errorHandlingSignals += (file.patch.match(/\b(try|catch|throw|error)\b/gi) ?? []).length
+        current.validationSignals +=
+          (file.patch.match(/\b(validate|schema|zod|joi|guard|assert|sanitize)\b/gi) ?? []).length
+      }
+    }
+
+    merged.set(key, current)
+  }
+
+  for (const commit of commits) {
+    const handle = commit.author?.login?.trim() ?? null
+    const name = commit.commit.author?.name?.trim() || handle || '알 수 없는 기여자'
+    const key = normalizeContributorKey(handle ?? name)
+    const current =
+      merged.get(key) ??
+      {
+        name,
+        handle,
+        totalContributions: null,
+        recentCommitCount: 0,
+        recentCommitAt: null,
+        messages: [],
+        files: new Set<string>(),
+        fileStats: new Map<string, { touches: number; changes: number }>(),
+        totalChanges: 0,
+        testFileTouches: 0,
+        docFileTouches: 0,
+        configFileTouches: 0,
+        anyTypeSignals: 0,
+        errorHandlingSignals: 0,
+        validationSignals: 0,
+        largeChangeCommitCount: 0,
+      }
+
+    const message = firstLine(commit.commit.message)
+    if (message && !current.messages.includes(message) && current.messages.length < 20) {
+      current.messages.push(message)
+    }
+
+    merged.set(key, current)
+  }
+
+  return Array.from(merged.values())
+    .filter((entry) => entry.name.trim().length > 0)
+    .sort((left, right) => {
+      const leftWeight = (left.totalContributions ?? 0) * 10 + left.recentCommitCount
+      const rightWeight = (right.totalContributions ?? 0) * 10 + right.recentCommitCount
+      return rightWeight - leftWeight
+    })
+    .slice(0, MAX_CONTRIBUTOR_COUNT)
+    .map((entry, index) => {
+      const focusArea = inferContributorFocus(entry.messages, {
+        testFileTouches: entry.testFileTouches,
+        docFileTouches: entry.docFileTouches,
+        configFileTouches: entry.configFileTouches,
+      })
+      const quality = evaluateContributorCodeQuality(entry, focusArea)
+
+      return {
+        id: `contributor-${index + 1}`,
+        name: entry.name,
+        handle: entry.handle,
+        totalContributions: entry.totalContributions,
+        recentCommitCount: entry.recentCommitCount,
+        recentCommitAt: entry.recentCommitAt ?? collectedAt,
+        focusArea,
+        codeQualityScore: quality.score,
+        codeQualitySummary: quality.summary,
+        codeQualityBreakdown: quality.breakdown,
+        evidence: quality.evidence,
+        strengths: quality.strengths,
+        risk: quality.risk,
+        recommendation: quality.recommendation,
+      }
+    })
+}
+
+function inferContributorFocus(
+  messages: string[],
+  fileSignals: {
+    testFileTouches: number
+    docFileTouches: number
+    configFileTouches: number
+  },
+) {
+  if (fileSignals.testFileTouches >= 2) {
+    return '테스트/품질'
+  }
+  if (fileSignals.configFileTouches >= 2) {
+    return '인프라/배포'
+  }
+  if (fileSignals.docFileTouches >= 2) {
+    return '문서/가이드'
+  }
+
+  if (messages.length === 0) {
+    return '유지보수/전반'
+  }
+
+  const rules: Array<{ label: string; keywords: string[] }> = [
+    { label: '테스트/품질', keywords: ['test', 'jest', 'vitest', 'pytest', 'cypress', 'playwright', 'lint', 'typecheck'] },
+    { label: '문서/가이드', keywords: ['docs', 'doc', 'readme', 'guide', 'changelog'] },
+    { label: '인프라/배포', keywords: ['deploy', 'docker', 'infra', 'workflow', 'ci', 'cd', 'k8s', 'terraform'] },
+    { label: '버그 수정/안정화', keywords: ['fix', 'bug', 'hotfix', 'patch', 'error'] },
+    { label: '리팩토링', keywords: ['refactor', 'cleanup', 'restructure', 'rename', 'optimize'] },
+    { label: '기능 개발', keywords: ['feat', 'feature', 'implement', 'add', 'create'] },
+  ]
+  const lowerMessages = messages.join(' ').toLowerCase()
+  let winner = '유지보수/전반'
+  let highestScore = 0
+
+  for (const rule of rules) {
+    const score = rule.keywords.reduce(
+      (sum, keyword) => sum + (lowerMessages.includes(keyword) ? 1 : 0),
+      0,
+    )
+
+    if (score > highestScore) {
+      highestScore = score
+      winner = rule.label
+    }
+  }
+
+  return winner
+}
+
+function evaluateContributorCodeQuality(
+  signal: {
+    recentCommitCount: number
+    messages: string[]
+    files: Set<string>
+    fileStats: Map<string, { touches: number; changes: number }>
+    totalChanges: number
+    testFileTouches: number
+    docFileTouches: number
+    configFileTouches: number
+    anyTypeSignals: number
+    errorHandlingSignals: number
+    validationSignals: number
+    largeChangeCommitCount: number
+    totalContributions: number | null
+  },
+  focusArea: string,
+) {
+  const commitCount = Math.max(signal.recentCommitCount, 1)
+  const filesTouched = Math.max(signal.files.size, 1)
+  const avgChangesPerCommit = signal.totalChanges / commitCount
+  const filesPerCommit = filesTouched / commitCount
+  const testRatio = signal.testFileTouches / filesTouched
+  const genericCount = signal.messages.filter(isGenericCommitMessage).length
+  const meaningfulRatio =
+    signal.messages.length > 0 ? (signal.messages.length - genericCount) / signal.messages.length : 0
+  const hasTestKeyword = signal.messages.some((message) => /\b(test|jest|vitest|pytest|cypress|playwright)\b/i.test(message))
+  const hasFixKeyword = signal.messages.some((message) => /\b(fix|bug|hotfix|patch|security)\b/i.test(message))
+
+  let changeScope = 84
+  if (avgChangesPerCommit > 650) {
+    changeScope -= 34
+  } else if (avgChangesPerCommit > 350) {
+    changeScope -= 22
+  } else if (avgChangesPerCommit > 200) {
+    changeScope -= 12
+  } else if (avgChangesPerCommit < 20 && signal.recentCommitCount > 0) {
+    changeScope -= 6
+  } else {
+    changeScope += 4
+  }
+  if (filesPerCommit > 16) {
+    changeScope -= 13
+  } else if (filesPerCommit >= 2 && filesPerCommit <= 10) {
+    changeScope += 5
+  }
+  if (signal.largeChangeCommitCount >= 2) {
+    changeScope -= 8
+  }
+  changeScope = clamp(Math.round(changeScope), 20, 100)
+
+  let testDiscipline = 34 + Math.round(testRatio * 82)
+  if (hasTestKeyword) {
+    testDiscipline += 8
+  }
+  if (signal.configFileTouches > 0) {
+    testDiscipline += 6
+  }
+  if (signal.totalChanges > 1200 && signal.testFileTouches === 0) {
+    testDiscipline -= 14
+  }
+  testDiscipline = clamp(Math.round(testDiscipline), 15, 100)
+
+  let riskControl = 52
+  riskControl += Math.min(12, signal.errorHandlingSignals * 2)
+  riskControl += Math.min(10, signal.validationSignals * 2)
+  riskControl -= Math.min(18, signal.anyTypeSignals * 2)
+  if (hasFixKeyword) {
+    riskControl += 6
+  }
+  if (signal.largeChangeCommitCount > 1) {
+    riskControl -= 8
+  }
+  riskControl = clamp(Math.round(riskControl), 15, 100)
+
+  let consistency = 48 + Math.round(meaningfulRatio * 30)
+  if (signal.docFileTouches > 0) {
+    consistency += 6
+  }
+  if (signal.recentCommitCount >= 3) {
+    consistency += 6
+  }
+  if (signal.messages.length > 0 && genericCount / signal.messages.length >= 0.6) {
+    consistency -= 8
+  }
+  consistency = clamp(Math.round(consistency), 15, 100)
+
+  const score = clamp(
+    Math.round(changeScope * 0.29 + testDiscipline * 0.26 + riskControl * 0.27 + consistency * 0.18),
+    0,
+    100,
+  )
+  const evidence = Array.from(signal.fileStats.entries())
+    .sort((left, right) => right[1].changes - left[1].changes)
+    .slice(0, 3)
+    .map(([path, stats]) => `${path} (변경 ${stats.changes}줄, 터치 ${stats.touches}회)`)
+  const breakdownEntries = [
+    { key: 'changeScope', label: '변경 범위 제어', score: changeScope },
+    { key: 'testDiscipline', label: '테스트 동반성', score: testDiscipline },
+    { key: 'riskControl', label: '리스크 제어', score: riskControl },
+    { key: 'consistency', label: '일관성', score: consistency },
+  ] as const
+  const weakest = breakdownEntries.reduce((lowest, current) => (current.score < lowest.score ? current : lowest))
+  const strengths = buildContributorStrengths({
+    focusArea,
+    totalContributions: signal.totalContributions,
+    recentCommitCount: signal.recentCommitCount,
+    breakdown: { changeScope, testDiscipline, riskControl, consistency },
+  })
+
+  return {
+    score,
+    breakdown: {
+      changeScope,
+      testDiscipline,
+      riskControl,
+      consistency,
+    },
+    summary: `${weakest.label} 점수가 상대적으로 낮아 이 구간 보완이 필요합니다.`,
+    evidence: evidence.length > 0 ? evidence : ['최근 커밋 diff 기반 증거가 충분하지 않습니다.'],
+    strengths,
+    risk: buildContributorRisk({
+      recentCommitCount: signal.recentCommitCount,
+      focusArea,
+      weakestKey: weakest.key,
+      weakestScore: weakest.score,
+      testDiscipline,
+    }),
+    recommendation: buildContributorRecommendation({
+      focusArea,
+      weakestKey: weakest.key,
+      recentCommitCount: signal.recentCommitCount,
+    }),
+  }
+}
+
+function buildContributorStrengths(input: {
+  focusArea: string
+  totalContributions: number | null
+  recentCommitCount: number
+  breakdown: {
+    changeScope: number
+    testDiscipline: number
+    riskControl: number
+    consistency: number
+  }
+}) {
+  const strengths: string[] = []
+
+  if ((input.totalContributions ?? 0) >= 30) {
+    strengths.push('누적 기여량이 높아 코드베이스 맥락 이해도가 높습니다.')
+  }
+  if (input.recentCommitCount >= 3) {
+    strengths.push('최근 커밋 활동이 안정적으로 유지되고 있습니다.')
+  }
+  if (input.breakdown.changeScope >= 75) {
+    strengths.push('변경 범위를 비교적 안정적으로 제어합니다.')
+  }
+  if (input.breakdown.testDiscipline >= 70) {
+    strengths.push('테스트 동반 신호가 충분히 확인됩니다.')
+  }
+  if (input.breakdown.riskControl >= 72) {
+    strengths.push('리스크 제어를 의식한 변경 패턴이 보입니다.')
+  }
+  if (input.breakdown.consistency >= 72) {
+    strengths.push('커밋 스타일과 변경 흐름의 일관성이 좋습니다.')
+  }
+  if (input.focusArea !== '유지보수/전반') {
+    strengths.push(`${input.focusArea} 영역에서 명확한 작업 흔적이 보입니다.`)
+  }
+
+  if (strengths.length === 0) {
+    strengths.push('최근 커밋 기반으로 기본적인 품질 유지 신호가 보입니다.')
+  }
+
+  return strengths.slice(0, 3)
+}
+
+function buildContributorRisk(input: {
+  recentCommitCount: number
+  focusArea: string
+  weakestKey: 'changeScope' | 'testDiscipline' | 'riskControl' | 'consistency'
+  weakestScore: number
+  testDiscipline: number
+}) {
+  if (input.recentCommitCount === 0) {
+    return '최근 기본 브랜치 기여가 없어 현재 코드베이스 맥락이 끊길 수 있습니다.'
+  }
+  if (input.recentCommitCount === 1) {
+    return '최근 기여 빈도가 낮아 지식 전파와 리뷰 속도가 느려질 수 있습니다.'
+  }
+  if (input.weakestKey === 'testDiscipline' && input.testDiscipline < 60) {
+    return '테스트 동반성이 낮아 배포 전 회귀 리스크가 남아 있을 수 있습니다.'
+  }
+  if (input.weakestKey === 'riskControl' && input.weakestScore < 60) {
+    return '에러/검증 패턴이 약해 장애 상황에서 복구 비용이 커질 수 있습니다.'
+  }
+  if (input.focusArea === '기능 개발') {
+    return '기능 개발 비중이 높아 회귀 테스트 범위를 함께 확장하지 않으면 안정성 리스크가 생길 수 있습니다.'
+  }
+
+  return '즉시 치명적인 리스크는 낮지만, 역할 경계를 문서화하면 협업 효율이 더 좋아집니다.'
+}
+
+function buildContributorRecommendation(input: {
+  focusArea: string
+  weakestKey: 'changeScope' | 'testDiscipline' | 'riskControl' | 'consistency'
+  recentCommitCount: number
+}) {
+  if (input.recentCommitCount === 0) {
+    return '작은 유지보수 커밋이라도 정기적으로 반영해 최신 소유권 신호를 회복하세요.'
+  }
+  if (input.weakestKey === 'changeScope') {
+    return '커밋/PR 단위를 더 작게 나눠 리뷰 가능성과 회귀 추적성을 높이세요.'
+  }
+  if (input.weakestKey === 'testDiscipline') {
+    return '핵심 변경 경로에 단위 또는 통합 테스트를 함께 추가하고 CI에서 강제하세요.'
+  }
+  if (input.weakestKey === 'riskControl') {
+    return '실패 경로(예외/검증) 코드를 먼저 보강해 운영 리스크를 줄이세요.'
+  }
+  if (input.weakestKey === 'consistency') {
+    return '커밋 메시지 규칙과 변경 템플릿을 통일해 협업 가독성을 높이세요.'
+  }
+  if (input.focusArea === '테스트/품질') {
+    return '테스트 커버리지를 CI 게이트와 연결해 팀 전체의 품질 기준으로 고정하세요.'
+  }
+  if (input.focusArea === '인프라/배포') {
+    return '배포/워크플로 변경에는 운영 체크리스트를 함께 남겨 인수인계 비용을 낮추세요.'
+  }
+  if (input.focusArea === '문서/가이드') {
+    return '문서 업데이트를 코드 변경과 같은 PR에 묶어 최신성 격차를 줄이세요.'
+  }
+
+  return '기능/리팩토링 변경 시 영향 범위를 작게 나눠 리뷰 가능성을 높이세요.'
+}
+
+function isGenericCommitMessage(message: string) {
+  const normalized = message.trim().toLowerCase()
+  return normalized.length < 12 || GENERIC_COMMIT_MESSAGES.has(normalized)
+}
+
+function isTestFilePath(path: string) {
+  return (
+    path.includes('/test/') ||
+    path.includes('/tests/') ||
+    path.includes('/__tests__/') ||
+    path.includes('/e2e/') ||
+    path.includes('/cypress/') ||
+    /\.test\.[a-z0-9]+$/.test(path) ||
+    /\.spec\.[a-z0-9]+$/.test(path)
+  )
+}
+
+function isDocumentationFilePath(path: string) {
+  return (
+    path.includes('/docs/') ||
+    path.endsWith('.md') ||
+    path.endsWith('.mdx') ||
+    path.includes('/wiki/')
+  )
+}
+
+function isConfigOrInfraFilePath(path: string) {
+  return (
+    path.includes('.github/workflows/') ||
+    path.includes('/infra/') ||
+    path.includes('/terraform/') ||
+    path.includes('/k8s/') ||
+    path.endsWith('dockerfile') ||
+    path.endsWith('docker-compose.yml') ||
+    path.endsWith('docker-compose.yaml') ||
+    path.endsWith('eslint.config.js') ||
+    path.endsWith('eslint.config.mjs')
+  )
+}
+
+function normalizeContributorKey(value: string) {
+  return value.trim().toLowerCase()
+}
+
+function getMetricLabel(key: keyof DevMetric) {
+  const labels: Record<keyof DevMetric, string> = {
+    readability: '가독성',
+    efficiency: '효율성',
+    security: '보안성',
+    architecture: '구조 설계',
+    consistency: '일관성',
+    modernity: '현대성',
+  }
+
+  return labels[key]
+}
+
 function describeWeakestMetric(metrics: DevMetric) {
   const entries = Object.entries(metrics) as Array<[keyof DevMetric, number]>
   const [weakestKey] = entries.reduce((lowest, current) => (current[1] < lowest[1] ? current : lowest))
@@ -1524,6 +2368,7 @@ type TarballExtractionResult = {
   workflowSignals: WorkflowSignal[]
   codeSamples: RepositoryCodeSample[]
   rootContents: { name: string, type: 'dir' | 'file' }[]
+  codebaseProfile: CodebaseProfile
 }
 
 async function downloadAndExtractTarball(repositoryPath: string, branch: string): Promise<TarballExtractionResult> {
@@ -1544,10 +2389,23 @@ async function downloadAndExtractTarball(repositoryPath: string, branch: string)
       rootFileContents: {},
       workflowSignals: [],
       codeSamples: [],
-      rootContents: []
+      rootContents: [],
+      codebaseProfile: {
+        totalCodeFiles: 0,
+        totalCodeLines: 0,
+        sampledCodeFiles: 0,
+        sampledCodeChars: 0,
+        sampleCoveragePercent: 0,
+        topDirectories: [],
+        languages: [],
+      },
     }
     const rootItems = new Set<string>()
-    let totalCodeChars = 0
+    const directoryHistogram = new Map<string, number>()
+    const languageHistogram = new Map<string, { files: number; lines: number }>()
+    const sampledDirectoryCounts = new Map<string, number>()
+    const sampledLanguageCounts = new Map<string, number>()
+    let sampledCodeChars = 0
     
     extract.on('entry', (header, stream, next) => {
       const parts = header.name.split('/')
@@ -1596,11 +2454,32 @@ async function downloadAndExtractTarball(repositoryPath: string, branch: string)
           if (signal) result.workflowSignals.push(signal)
         }
         
-        if (isCode && totalCodeChars < MAX_TOTAL_CHARS) {
+        if (isCode) {
+          const lineCount = countCodeLines(text)
+          const directoryBucket = getDirectoryBucket(path)
+          const language = detectCodeLanguage(path)
+
+          result.codebaseProfile.totalCodeFiles += 1
+          result.codebaseProfile.totalCodeLines += lineCount
+          incrementNumberMap(directoryHistogram, directoryBucket, 1)
+          incrementLanguageHistogram(languageHistogram, language, lineCount)
+
           const sample = buildRepositoryCodeSample(path, text)
-          if (sample) {
+          const directorySampleCount = sampledDirectoryCounts.get(directoryBucket) ?? 0
+          const languageSampleCount = sampledLanguageCounts.get(language) ?? 0
+          const canSampleByQuota =
+            directorySampleCount < MAX_SAMPLES_PER_DIRECTORY &&
+            languageSampleCount < MAX_SAMPLES_PER_LANGUAGE
+          const canSampleByTotal =
+            result.codeSamples.length < MAX_CODE_SAMPLES &&
+            sample !== null &&
+            sampledCodeChars + sample.snippet.length <= MAX_TOTAL_SAMPLE_CHARS
+
+          if (sample && canSampleByQuota && canSampleByTotal) {
             result.codeSamples.push(sample)
-            totalCodeChars += sample.snippet.length
+            sampledCodeChars += sample.snippet.length
+            sampledDirectoryCounts.set(directoryBucket, directorySampleCount + 1)
+            sampledLanguageCounts.set(language, languageSampleCount + 1)
           }
         }
         
@@ -1608,7 +2487,28 @@ async function downloadAndExtractTarball(repositoryPath: string, branch: string)
       })
     })
     
-    extract.on('finish', () => resolve(result))
+    extract.on('finish', () => {
+      result.codebaseProfile.sampledCodeFiles = result.codeSamples.length
+      result.codebaseProfile.sampledCodeChars = sampledCodeChars
+      result.codebaseProfile.sampleCoveragePercent =
+        result.codebaseProfile.totalCodeFiles > 0
+          ? clamp(Math.round((result.codeSamples.length / result.codebaseProfile.totalCodeFiles) * 100), 0, 100)
+          : 0
+      result.codebaseProfile.topDirectories = Array.from(directoryHistogram.entries())
+        .sort((left, right) => right[1] - left[1])
+        .slice(0, 5)
+        .map(([path, files]) => ({ path, files }))
+      result.codebaseProfile.languages = Array.from(languageHistogram.entries())
+        .sort((left, right) => right[1].files - left[1].files)
+        .slice(0, 6)
+        .map(([language, stats]) => ({
+          language,
+          files: stats.files,
+          lines: stats.lines,
+        }))
+
+      resolve(result)
+    })
     extract.on('error', reject)
     
     const gunzip = zlib.createGunzip()

@@ -5,6 +5,7 @@ import type {
   AIInsight,
   CleanCodeEvaluation,
   CleanCodeCriterionKey,
+  CodebaseProfile,
   ConceptGap,
   DevMetric,
   MarketFit,
@@ -54,6 +55,18 @@ type RepositoryAIInput = {
     snippet: string
     truncated: boolean
   }>
+  codebaseProfile: CodebaseProfile
+  contributorInsights: Array<{
+    name: string
+    handle: string | null
+    totalContributions: number | null
+    recentCommitCount: number
+    focusArea: string
+    codeQualityScore: number
+    codeQualitySummary: string
+    risk: string
+    recommendation: string
+  }>
 }
 
 type GeminiGenerateContentResponse = {
@@ -83,6 +96,8 @@ const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash'
 const GEMINI_RETRYABLE_STATUS_CODES = new Set([429, 500, 503])
 const GEMINI_MAX_ATTEMPTS = 3
 const GEMINI_MAX_GENERATION_ATTEMPTS = 2
+const PROMPT_CODE_SAMPLE_MAX_ITEMS = 24
+const PROMPT_CODE_SAMPLE_CHAR_BUDGET = 90000
 const CLEAN_CODE_CRITERIA: Array<{
   key: CleanCodeCriterionKey
   label: string
@@ -412,6 +427,7 @@ function buildGeminiPrompt(input: RepositoryAIInput) {
     'You are a strict, pragmatic Tech Lead evaluating a codebase for actual production-readiness and commercial market viability.',
     'Your tone must be extremely dry, objective, and unconditionally professional. Do NOT use polite fillers, encouraging remarks, or sugar-coated praise.',
     'Base every claim strictly on the repository evidence provided in the JSON payload. You have access to a massive volume of the full codebase.',
+    'The repository has been fully scanned. codebaseProfile covers all code files; codeSamples are representative excerpts for textual evidence.',
     'Evaluate strictly: Can this code be deployed to a real-world B2B/B2C service immediately? Does it have market competitiveness?',
     'If the codebase lacks enterprise-grade robustness (e.g., proper error handling, tests, security, caching, concurrency control) or looks like a mere toy project, explicitly point it out as a critical production blocker.',
     'Do not invent files, practices, tests, deployment setups, or team processes unsupported by evidence.',
@@ -430,6 +446,8 @@ function buildGeminiPrompt(input: RepositoryAIInput) {
 }
 
 function buildPromptPayload(input: RepositoryAIInput) {
+  const promptCodeSamples = buildPromptCodeSamples(input.codeSamples)
+
   return {
     repository: {
       fullName: input.repository.fullName,
@@ -448,8 +466,20 @@ function buildPromptPayload(input: RepositoryAIInput) {
     metrics: input.metrics,
     marketFits: input.marketFits,
     repositorySignals: input.repositorySignals,
+    codebaseProfile: input.codebaseProfile,
+    contributors: input.contributorInsights.map((item) => ({
+      name: item.name,
+      handle: item.handle,
+      totalContributions: item.totalContributions,
+      recentCommitCount: item.recentCommitCount,
+      focusArea: item.focusArea,
+      codeQualityScore: item.codeQualityScore,
+      codeQualitySummary: item.codeQualitySummary,
+      risk: item.risk,
+      recommendation: item.recommendation,
+    })),
     recentCommits: input.recentCommits,
-    codeSamples: input.codeSamples,
+    codeSamples: promptCodeSamples,
     cleanCodeRubric: CLEAN_CODE_CRITERIA,
     heuristicDraft: {
       metrics: input.metrics,
@@ -471,6 +501,35 @@ function buildPromptPayload(input: RepositoryAIInput) {
   }
 }
 
+function buildPromptCodeSamples(codeSamples: RepositoryAIInput['codeSamples']) {
+  const selected: RepositoryAIInput['codeSamples'] = []
+  let usedChars = 0
+
+  for (const sample of codeSamples) {
+    if (selected.length >= PROMPT_CODE_SAMPLE_MAX_ITEMS) {
+      break
+    }
+
+    const remaining = PROMPT_CODE_SAMPLE_CHAR_BUDGET - usedChars
+
+    if (remaining <= 240) {
+      break
+    }
+
+    const needsTrim = sample.snippet.length > remaining
+    const snippet = needsTrim ? sample.snippet.slice(0, remaining).trimEnd() : sample.snippet
+
+    selected.push({
+      ...sample,
+      snippet,
+      truncated: sample.truncated || needsTrim,
+    })
+    usedChars += snippet.length
+  }
+
+  return selected
+}
+
 function deriveDraftFocusArea(metrics: DevMetric) {
   const entries = Object.entries(metrics) as Array<[keyof DevMetric, number]>
   const [weakestKey] = entries.reduce((lowest, current) => (current[1] < lowest[1] ? current : lowest))
@@ -488,11 +547,9 @@ function deriveDraftFocusArea(metrics: DevMetric) {
 }
 
 function parseAIEnhancement(rawText: string, model: string): RepositoryAIEnhancement | null {
-  let parsed: unknown
+  const parsed = tryParseAIEnhancementJson(rawText)
 
-  try {
-    parsed = JSON.parse(rawText)
-  } catch {
+  if (!parsed) {
     return null
   }
 
@@ -524,6 +581,38 @@ function parseAIEnhancement(rawText: string, model: string): RepositoryAIEnhance
       recommendation: item.recommendation.trim(),
     })),
   }
+}
+
+function tryParseAIEnhancementJson(rawText: string): unknown | null {
+  const candidates: string[] = []
+  const trimmed = rawText.trim()
+
+  if (trimmed) {
+    candidates.push(trimmed)
+  }
+
+  const fencedMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  if (fencedMatch?.[1]) {
+    candidates.push(fencedMatch[1].trim())
+  }
+
+  const startIndex = rawText.indexOf('{')
+  const endIndex = rawText.lastIndexOf('}')
+  if (startIndex >= 0 && endIndex > startIndex) {
+    candidates.push(rawText.slice(startIndex, endIndex + 1).trim())
+  }
+
+  const uniqueCandidates = Array.from(new Set(candidates))
+
+  for (const candidate of uniqueCandidates) {
+    try {
+      return JSON.parse(candidate)
+    } catch {
+      // Continue to next candidate.
+    }
+  }
+
+  return null
 }
 
 function isAIEnhancementShape(value: unknown): value is {
@@ -571,9 +660,9 @@ function isAIEnhancementShape(value: unknown): value is {
     value.aiInsight.strengths.some((item) => typeof item !== 'string') ||
     typeof value.aiInsight.nextStep !== 'string' ||
     !Array.isArray(value.reviewSuggestions) ||
-    value.reviewSuggestions.length !== 3 ||
+    value.reviewSuggestions.length < 1 ||
     !Array.isArray(value.conceptGaps) ||
-    value.conceptGaps.length !== 3
+    value.conceptGaps.length < 1
   ) {
     return false
   }

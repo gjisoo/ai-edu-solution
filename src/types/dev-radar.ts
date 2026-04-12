@@ -99,6 +99,47 @@ export interface RepositorySummary {
   topics: string[]
 }
 
+export interface CodebaseLanguageProfile {
+  language: string
+  files: number
+  lines: number
+}
+
+export interface CodebaseProfile {
+  totalCodeFiles: number
+  totalCodeLines: number
+  sampledCodeFiles: number
+  sampledCodeChars: number
+  sampleCoveragePercent: number
+  topDirectories: Array<{
+    path: string
+    files: number
+  }>
+  languages: CodebaseLanguageProfile[]
+}
+
+export interface ContributorInsight {
+  id: string
+  name: string
+  handle: string | null
+  totalContributions: number | null
+  recentCommitCount: number
+  recentCommitAt: string | null
+  focusArea: string
+  codeQualityScore: number
+  codeQualitySummary: string
+  codeQualityBreakdown: {
+    changeScope: number
+    testDiscipline: number
+    riskControl: number
+    consistency: number
+  }
+  evidence: string[]
+  strengths: string[]
+  risk: string
+  recommendation: string
+}
+
 export interface AnalysisEngine {
   mode: 'heuristic' | 'hybrid-ai'
   label: string
@@ -115,6 +156,8 @@ export interface AIInsight {
 export interface DashboardAnalysis {
   githubId: string
   repository: RepositorySummary
+  codebaseProfile: CodebaseProfile
+  contributorInsights: ContributorInsight[]
   engine: AnalysisEngine
   aiInsight: AIInsight | null
   collectedAt: string

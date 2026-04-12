@@ -1,6 +1,8 @@
 import type {
   ActivityEvent,
+  CodebaseProfile,
   ConceptGap,
+  ContributorInsight,
   DashboardAnalysis,
   DevMetric,
   MarketFit,
@@ -159,6 +161,81 @@ function createActivity(seed: number, githubId: string): ActivityEvent[] {
   ]
 }
 
+function createCodebaseProfile(seed: number): CodebaseProfile {
+  const totalCodeFiles = 90 + (seed % 220)
+  const sampledCodeFiles = Math.max(24, Math.round(totalCodeFiles * 0.42))
+  const totalCodeLines = totalCodeFiles * (80 + (seed % 40))
+  const sampledCodeChars = sampledCodeFiles * (1100 + (seed % 320))
+
+  return {
+    totalCodeFiles,
+    totalCodeLines,
+    sampledCodeFiles,
+    sampledCodeChars,
+    sampleCoveragePercent: clamp(Math.round((sampledCodeFiles / totalCodeFiles) * 100), 1, 100),
+    topDirectories: [
+      { path: 'src', files: Math.round(totalCodeFiles * 0.54) },
+      { path: 'components', files: Math.round(totalCodeFiles * 0.2) },
+      { path: 'lib', files: Math.round(totalCodeFiles * 0.16) },
+    ],
+    languages: [
+      { language: 'TypeScript', files: Math.round(totalCodeFiles * 0.68), lines: Math.round(totalCodeLines * 0.7) },
+      { language: 'TSX', files: Math.round(totalCodeFiles * 0.2), lines: Math.round(totalCodeLines * 0.18) },
+      { language: 'JavaScript', files: Math.round(totalCodeFiles * 0.12), lines: Math.round(totalCodeLines * 0.12) },
+    ],
+  }
+}
+
+function createContributorInsights(seed: number): ContributorInsight[] {
+  const contributors = ['alpha-dev', 'beta-dev', 'gamma-dev']
+
+  return contributors.map((name, index) => {
+    const recentCommitCount = 2 + ((seed + index * 7) % 8)
+    const totalContributions = recentCommitCount * (4 + index)
+
+    return {
+      id: `contributor-${seed}-${index + 1}`,
+      name,
+      handle: name,
+      totalContributions,
+      recentCommitCount,
+      recentCommitAt: new Date(Date.now() - index * 1000 * 60 * 60 * 18).toISOString(),
+      focusArea: index === 0 ? '기능 개발' : index === 1 ? '테스트/품질' : '리팩토링/유지보수',
+      codeQualityScore: clamp(68 + ((seed + index * 13) % 26), 0, 100),
+      codeQualitySummary:
+        index === 0
+          ? '변경 범위 제어는 안정적이지만 테스트 동반 비율을 더 높이면 배포 신뢰도가 올라갑니다.'
+          : index === 1
+            ? '테스트/품질 변경 비중이 높아 회귀 예방 신호가 강합니다.'
+            : '리팩토링 품질은 양호하나 변경 근거를 커밋 단위로 더 명확히 남기면 리뷰 효율이 좋아집니다.',
+      codeQualityBreakdown: {
+        changeScope: clamp(66 + ((seed + index * 9) % 28), 0, 100),
+        testDiscipline: clamp(62 + ((seed + index * 7) % 30), 0, 100),
+        riskControl: clamp(64 + ((seed + index * 11) % 27), 0, 100),
+        consistency: clamp(67 + ((seed + index * 5) % 25), 0, 100),
+      },
+      evidence: [
+        'src/app/dashboard/page.tsx 변경에서 UI 상태 분리 커밋이 확인됩니다.',
+        'tests/analysis.spec.ts 추가로 회귀 체크 신호가 보입니다.',
+      ],
+      strengths: [
+        '최근 커밋 활동이 안정적으로 유지됩니다.',
+        '커밋 메시지 가독성이 좋아 리뷰 추적이 쉽습니다.',
+      ],
+      risk:
+        index === 2
+          ? '최근 커밋 빈도가 상대적으로 낮아 작업 연속성이 끊길 수 있습니다.'
+          : '큰 리스크 신호는 없지만, 변경 범위가 커지기 전에 단위 테스트를 함께 강화하는 것이 좋습니다.',
+      recommendation:
+        index === 0
+          ? '핵심 기능 변경 시 테스트 케이스를 동시에 추가해 안정성을 높이세요.'
+          : index === 1
+            ? '품질 자동화 범위를 CI 단계까지 확장해 회귀를 줄이세요.'
+            : '리팩토링 변경은 작은 PR 단위로 나눠 지식 공유 속도를 높이세요.',
+    }
+  })
+}
+
 export function createDashboardAnalysis(githubId: string): DashboardAnalysis {
   const seed = hashString(githubId)
   const metrics = createMetrics(seed)
@@ -167,6 +244,8 @@ export function createDashboardAnalysis(githubId: string): DashboardAnalysis {
   return {
     githubId: normalizedRepository,
     repository: createRepository(normalizedRepository),
+    codebaseProfile: createCodebaseProfile(seed),
+    contributorInsights: createContributorInsights(seed),
     engine: {
       mode: 'heuristic',
       label: 'GitHub API + 규칙 기반 분석',
