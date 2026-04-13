@@ -1,6 +1,6 @@
 'use client'
 
-import { type FormEvent, useMemo, useState } from 'react'
+import { type FormEvent, useEffect, useMemo, useState } from 'react'
 import {
   AlertCircle,
   BriefcaseBusiness,
@@ -64,6 +64,9 @@ export function DashboardShell() {
   const [activeModal, setActiveModal] = useState<DetailModalKey>(null)
   const [isRetryingAI, setIsRetryingAI] = useState(false)
   const [selectedCoursePlatforms, setSelectedCoursePlatforms] = useState<Array<(typeof coursePlatformOptions)[number]>>(defaultCoursePlatforms)
+  const [isGitHubConnected, setIsGitHubConnected] = useState(false)
+  const [isCheckingGitHubSession, setIsCheckingGitHubSession] = useState(true)
+  const [githubAuthNotice, setGitHubAuthNotice] = useState<string | null>(null)
 
   const summaryStats = useMemo(() => {
     if (!analysis) {
@@ -82,6 +85,51 @@ export function DashboardShell() {
       contributorCount: analysis.contributorInsights.length,
     }
   }, [analysis])
+
+  useEffect(() => {
+    let mounted = true
+
+    const refreshSession = async () => {
+      try {
+        const response = await fetch('/api/auth/github/session', { cache: 'no-store' })
+        const payload = (await response.json()) as { authenticated?: boolean }
+        if (mounted) {
+          setIsGitHubConnected(Boolean(payload.authenticated))
+        }
+      } catch {
+        if (mounted) {
+          setIsGitHubConnected(false)
+        }
+      } finally {
+        if (mounted) {
+          setIsCheckingGitHubSession(false)
+        }
+      }
+    }
+
+    refreshSession()
+
+    const params = new URLSearchParams(window.location.search)
+    const githubStatus = params.get('github')
+    if (githubStatus === 'connected') {
+      setGitHubAuthNotice('GitHub 로그인이 연결되었습니다. 이제 private 저장소도 분석할 수 있습니다.')
+    } else if (githubStatus === 'disconnected') {
+      setGitHubAuthNotice('GitHub 연결이 해제되었습니다.')
+    } else if (githubStatus === 'oauth-error') {
+      setGitHubAuthNotice('GitHub 로그인 중 문제가 발생했습니다. 다시 시도해주세요.')
+    }
+
+    if (githubStatus) {
+      params.delete('github')
+      const nextQuery = params.toString()
+      const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}`
+      window.history.replaceState(null, '', nextUrl)
+    }
+
+    return () => {
+      mounted = false
+    }
+  }, [])
 
   async function handleAnalyze(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -176,6 +224,36 @@ export function DashboardShell() {
               {isLoading ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />분석 중</span> : '저장소 분석'}
             </Button>
           </form>
+
+          <div className="mt-4 rounded-2xl border border-[#eadfdb] bg-[#fffdfb] p-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">GitHub 로그인</p>
+                <p className="mt-1 text-sm text-slate-600">
+                  상태: {isCheckingGitHubSession ? '확인 중...' : isGitHubConnected ? '연결됨 (private 저장소 사용 가능)' : '미연결'}
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  window.location.href = isGitHubConnected ? '/api/auth/github/logout' : '/api/auth/github/login'
+                }}
+                disabled={isCheckingGitHubSession}
+              >
+                {isGitHubConnected ? 'GitHub 로그아웃' : 'GitHub 로그인'}
+              </Button>
+            </div>
+            <p className="mt-2 text-xs text-slate-500">
+              private 저장소 분석은 GitHub OAuth 로그인 후 해당 계정 접근 권한 범위 안에서만 가능합니다.
+            </p>
+          </div>
+
+          {githubAuthNotice ? (
+            <div className="mt-3 rounded-2xl border border-[#eadfdb] bg-white px-3 py-2 text-xs text-slate-600">
+              {githubAuthNotice}
+            </div>
+          ) : null}
 
           <div className="mt-4 rounded-2xl border border-[#eadfdb] bg-[#fffdfb] p-3">
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">강의 사이트 선택</p>

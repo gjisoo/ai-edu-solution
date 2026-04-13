@@ -423,11 +423,15 @@ export async function analyzeGitHubRepository(
   input: string,
   options: {
     preferredCoursePlatforms?: string[]
+    githubToken?: string
   } = {},
 ): Promise<DashboardAnalysis> {
   const parsed = parseGitHubRepositoryInput(input)
   const repositoryPath = `/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}`
-  const repository = await fetchGitHubJson<GitHubRepositoryResponse>(repositoryPath)
+  const githubToken = options.githubToken?.trim() || process.env.GITHUB_TOKEN?.trim() || null
+  const repository = await fetchGitHubJson<GitHubRepositoryResponse>(repositoryPath, {
+    githubToken,
+  })
   const preferredCoursePlatforms = normalizePreferredCoursePlatforms(options.preferredCoursePlatforms)
 
   const [
@@ -436,18 +440,20 @@ export async function analyzeGitHubRepository(
     contributors,
     { rootFileContents, workflowSignals, codeSamples, rootContents, codebaseProfile, codeContentSignals },
   ] = await Promise.all([
-    fetchGitHubJson<Record<string, number>>(`${repositoryPath}/languages`),
+    fetchGitHubJson<Record<string, number>>(`${repositoryPath}/languages`, {
+      githubToken,
+    }),
     fetchGitHubJson<GitHubCommitResponse[]>(
       `${repositoryPath}/commits?per_page=${MAX_COMMITS}&sha=${encodeURIComponent(repository.default_branch)}`,
-      { fallbackValue: [] },
+      { fallbackValue: [], githubToken },
     ),
     fetchGitHubJson<GitHubContributorResponse[]>(
       `${repositoryPath}/contributors?per_page=${MAX_CONTRIBUTOR_COUNT}`,
-      { fallbackValue: [] },
+      { fallbackValue: [], githubToken },
     ),
-    downloadAndExtractTarball(repositoryPath, repository.default_branch),
+    downloadAndExtractTarball(repositoryPath, repository.default_branch, githubToken),
   ])
-  const recentCommitDetails = await fetchRecentCommitDetails(repositoryPath, commits)
+  const recentCommitDetails = await fetchRecentCommitDetails(repositoryPath, commits, githubToken)
   const packageManifest = parsePackageManifest(rootFileContents['package.json'] ?? null)
   const packageScripts = extractPackageScripts(packageManifest)
   const frameworks = detectFrameworks({
@@ -720,10 +726,11 @@ async function fetchGitHubJson<T>(
   path: string,
   options: {
     fallbackValue?: T
+    githubToken?: string | null
   } = {},
 ): Promise<T> {
   const response = await fetch(`${GITHUB_API_BASE}${path}`, {
-    headers: buildGitHubHeaders(),
+    headers: buildGitHubHeaders(options.githubToken),
     cache: 'no-store',
   })
 
@@ -732,13 +739,17 @@ async function fetchGitHubJson<T>(
       return options.fallbackValue
     }
 
-    throw await createGitHubError(response)
+    throw await createGitHubError(response, options.githubToken)
   }
 
   return response.json() as Promise<T>
 }
 
-async function fetchRecentCommitDetails(repositoryPath: string, commits: GitHubCommitResponse[]) {
+async function fetchRecentCommitDetails(
+  repositoryPath: string,
+  commits: GitHubCommitResponse[],
+  githubToken?: string | null,
+) {
   const targets = commits.slice(0, MAX_COMMIT_DETAIL_COMMITS)
 
   if (targets.length === 0) {
@@ -749,6 +760,7 @@ async function fetchRecentCommitDetails(repositoryPath: string, commits: GitHubC
     targets.map(async (commit): Promise<RecentCommitDetail> => {
       const payload = await fetchGitHubJson<GitHubCommitDetailResponse>(
         `${repositoryPath}/commits/${encodeURIComponent(commit.sha)}`,
+        { githubToken },
       )
 
       const files = (payload.files ?? [])
@@ -778,15 +790,16 @@ async function fetchRecentCommitDetails(repositoryPath: string, commits: GitHubC
     .map((result) => result.value)
 }
 
-function buildGitHubHeaders() {
+function buildGitHubHeaders(githubToken?: string | null) {
   const headers: Record<string, string> = {
     Accept: 'application/vnd.github+json',
     'User-Agent': 'dev-radar-mvp',
     'X-GitHub-Api-Version': GITHUB_API_VERSION,
   }
 
-  if (process.env.GITHUB_TOKEN) {
-    headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`
+  const token = githubToken?.trim() || process.env.GITHUB_TOKEN?.trim()
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
   }
 
   return headers
@@ -799,13 +812,16 @@ function encodeGitHubPath(filePath: string) {
     .join('/')
 }
 
-async function createGitHubError(response: Response) {
+async function createGitHubError(response: Response, githubToken?: string | null) {
   const body = await readErrorBody(response)
   const rateLimitRemaining = response.headers.get('x-ratelimit-remaining')
+  const hasAuthToken = Boolean(githubToken?.trim() || process.env.GITHUB_TOKEN?.trim())
 
   if (response.status === 404) {
     return new GitHubAnalysisError(
-      '저장소를 찾을 수 없습니다. 공개 저장소인지 확인하거나 비공개 저장소라면 GITHUB_TOKEN을 설정해주세요.',
+      hasAuthToken
+        ? '저장소를 찾을 수 없습니다. owner/repo 경로와 저장소 공개 범위를 확인해주세요.'
+        : '저장소를 찾을 수 없습니다. 공개 저장소인지 확인하거나 비공개 저장소라면 GitHub 로그인을 연결해주세요.',
       404,
     )
   }
@@ -819,7 +835,9 @@ async function createGitHubError(response: Response) {
 
   if (response.status === 403) {
     return new GitHubAnalysisError(
-      'GitHub API 접근이 거부되었습니다. 토큰 권한과 저장소 공개 범위를 확인해주세요.',
+      hasAuthToken
+        ? 'GitHub API 접근이 거부되었습니다. 토큰 권한과 저장소 공개 범위를 확인해주세요.'
+        : 'GitHub API 접근이 거부되었습니다. 비공개 저장소 분석은 GitHub 로그인이 필요합니다.',
       403,
     )
   }
@@ -3173,14 +3191,18 @@ type TarballExtractionResult = {
   codeContentSignals: CodeContentSignals
 }
 
-async function downloadAndExtractTarball(repositoryPath: string, branch: string): Promise<TarballExtractionResult> {
+async function downloadAndExtractTarball(
+  repositoryPath: string,
+  branch: string,
+  githubToken?: string | null,
+): Promise<TarballExtractionResult> {
   const response = await fetch(`${GITHUB_API_BASE}${repositoryPath}/tarball/${encodeURIComponent(branch)}`, {
-    headers: buildGitHubHeaders(),
+    headers: buildGitHubHeaders(githubToken),
     cache: 'no-store'
   })
   
   if (!response.ok) {
-    throw await createGitHubError(response)
+    throw await createGitHubError(response, githubToken)
   }
   
   const arrayBuffer = await response.arrayBuffer()

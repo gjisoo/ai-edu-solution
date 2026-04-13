@@ -1,13 +1,20 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 
 import { analyzeGitHubRepository } from '@/lib/dev-radar/github-analysis'
+import {
+  GITHUB_OAUTH_SESSION_COOKIE_NAME,
+  readGitHubSessionCookieValue,
+} from '@/lib/github/oauth-session'
 
 export const maxDuration = 60
 
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
     const payload = (await request.json()) as { repo?: string; coursePlatforms?: string[] }
+    const session = readGitHubSessionCookieValue(
+      request.cookies.get(GITHUB_OAUTH_SESSION_COOKIE_NAME)?.value ?? null,
+    )
 
     if (!payload.repo || typeof payload.repo !== 'string') {
       return NextResponse.json(
@@ -18,6 +25,7 @@ export async function POST(request: Request) {
 
     const analysis = await analyzeGitHubRepository(payload.repo, {
       preferredCoursePlatforms: payload.coursePlatforms,
+      githubToken: session?.accessToken,
     })
 
     return NextResponse.json(analysis)
