@@ -55,6 +55,16 @@ const metricLabelMap: Record<MetricKey, string> = {
 const coursePlatformOptions = ['인프런', '유데미', '프로그래머스', '공식문서'] as const
 const defaultCoursePlatforms: Array<(typeof coursePlatformOptions)[number]> = ['인프런', '유데미', '프로그래머스']
 
+type MyGitHubRepository = {
+  id: number
+  fullName: string
+  private: boolean
+  url: string
+  description: string | null
+  updatedAt: string
+  pushedAt: string
+}
+
 export function DashboardShell() {
   const [repoInput, setRepoInput] = useState('')
   const [analysis, setAnalysis] = useState<DashboardAnalysis | null>(null)
@@ -67,6 +77,10 @@ export function DashboardShell() {
   const [isGitHubConnected, setIsGitHubConnected] = useState(false)
   const [isCheckingGitHubSession, setIsCheckingGitHubSession] = useState(true)
   const [githubAuthNotice, setGitHubAuthNotice] = useState<string | null>(null)
+  const [myGitHubRepositories, setMyGitHubRepositories] = useState<MyGitHubRepository[]>([])
+  const [isLoadingMyGitHubRepositories, setIsLoadingMyGitHubRepositories] = useState(false)
+  const [myGitHubRepositoriesError, setMyGitHubRepositoriesError] = useState<string | null>(null)
+  const [repoSearchQuery, setRepoSearchQuery] = useState('')
 
   const summaryStats = useMemo(() => {
     if (!analysis) {
@@ -85,6 +99,18 @@ export function DashboardShell() {
       contributorCount: analysis.contributorInsights.length,
     }
   }, [analysis])
+
+  const filteredMyGitHubRepositories = useMemo(() => {
+    const query = repoSearchQuery.trim().toLowerCase()
+
+    if (!query) {
+      return myGitHubRepositories
+    }
+
+    return myGitHubRepositories.filter((repo) =>
+      `${repo.fullName} ${repo.description ?? ''}`.toLowerCase().includes(query),
+    )
+  }, [myGitHubRepositories, repoSearchQuery])
 
   useEffect(() => {
     let mounted = true
@@ -130,6 +156,63 @@ export function DashboardShell() {
       mounted = false
     }
   }, [])
+
+  useEffect(() => {
+    if (!isGitHubConnected) {
+      setMyGitHubRepositories([])
+      setMyGitHubRepositoriesError(null)
+      setRepoSearchQuery('')
+      return
+    }
+
+    let cancelled = false
+
+    const loadMyGitHubRepositories = async () => {
+      try {
+        setIsLoadingMyGitHubRepositories(true)
+        setMyGitHubRepositoriesError(null)
+
+        const response = await fetch('/api/auth/github/repos?limit=60', {
+          cache: 'no-store',
+        })
+        if (response.status === 401) {
+          if (!cancelled) {
+            setIsGitHubConnected(false)
+          }
+          return
+        }
+        const payload = (await response.json()) as {
+          repositories?: MyGitHubRepository[]
+          error?: string
+        }
+
+        if (!response.ok || !Array.isArray(payload.repositories)) {
+          throw new Error(payload.error ?? '내 GitHub 저장소 목록을 불러오지 못했습니다.')
+        }
+
+        if (!cancelled) {
+          setMyGitHubRepositories(payload.repositories)
+        }
+      } catch (caughtError) {
+        if (!cancelled) {
+          setMyGitHubRepositories([])
+          setMyGitHubRepositoriesError(
+            caughtError instanceof Error ? caughtError.message : '내 GitHub 저장소 목록을 불러오지 못했습니다.',
+          )
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingMyGitHubRepositories(false)
+        }
+      }
+    }
+
+    loadMyGitHubRepositories()
+
+    return () => {
+      cancelled = true
+    }
+  }, [isGitHubConnected])
 
   async function handleAnalyze(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -252,6 +335,79 @@ export function DashboardShell() {
           {githubAuthNotice ? (
             <div className="mt-3 rounded-2xl border border-[#eadfdb] bg-white px-3 py-2 text-xs text-slate-600">
               {githubAuthNotice}
+            </div>
+          ) : null}
+
+          {isGitHubConnected ? (
+            <div className="mt-4 rounded-2xl border border-[#eadfdb] bg-[#fffdfb] p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                  내 GitHub 저장소
+                </p>
+                <span className="text-xs text-slate-500">
+                  {isLoadingMyGitHubRepositories
+                    ? '불러오는 중...'
+                    : repoSearchQuery.trim()
+                      ? `${filteredMyGitHubRepositories.length}/${myGitHubRepositories.length}개`
+                      : `${myGitHubRepositories.length}개`}
+                </span>
+              </div>
+
+              <div className="mt-3">
+                <Input
+                  type="text"
+                  value={repoSearchQuery}
+                  onChange={(event) => setRepoSearchQuery(event.target.value)}
+                  placeholder="레포 이름으로 빠르게 찾기 (예: backend, next, api)"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  className="h-10 border-slate-200 bg-white text-sm text-slate-800 placeholder:text-slate-400"
+                />
+              </div>
+
+              {myGitHubRepositoriesError ? (
+                <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-600">
+                  {myGitHubRepositoriesError}
+                </div>
+              ) : null}
+
+              {!myGitHubRepositoriesError && !isLoadingMyGitHubRepositories && filteredMyGitHubRepositories.length === 0 ? (
+                <div className="mt-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
+                  {repoSearchQuery.trim() ? '검색 결과가 없습니다.' : '표시할 저장소가 없습니다.'}
+                </div>
+              ) : null}
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                {filteredMyGitHubRepositories.slice(0, 12).map((repo) => (
+                  <button
+                    key={repo.id}
+                    type="button"
+                    onClick={() => {
+                      setRepoInput(repo.fullName)
+                      setError(null)
+                    }}
+                    className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+                  >
+                    <span>{repo.fullName}</span>
+                    <span
+                      className={cn(
+                        'rounded-full px-2 py-0.5 text-[10px] font-bold',
+                        repo.private ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700',
+                      )}
+                    >
+                      {repo.private ? 'private' : 'public'}
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              <p className="mt-2 text-xs text-slate-500">
+                {repoSearchQuery.trim()
+                  ? '검색 결과 상위 12개를 표시합니다. 클릭하면 분석 입력창에 자동으로 채워집니다.'
+                  : '최근 업데이트 기준 상위 12개를 표시합니다. 클릭하면 분석 입력창에 자동으로 채워집니다.'}
+              </p>
             </div>
           ) : null}
 
