@@ -50,6 +50,15 @@ type RepositoryAIInput = {
     hasSecurityFile: boolean
     meaningfulCommitRatio: number
     uniqueAuthors: number
+    codeCommentRatio: number
+    codeLongLineRatio: number
+    codeTodoPerKLines: number
+    codeUnsafeSignalPerKLines: number
+    codeValidationCoverage: number
+    codeErrorHandlingCoverage: number
+    codeLargeFileRatio: number
+    codeVeryLargeFileRatio: number
+    codeHighNestingRatio: number
   }
   recentCommits: Array<{
     sha: string

@@ -109,6 +109,10 @@ const WORKFLOW_FILE_PATTERN = /\.(ya?ml)$/i
 const MAX_CONTRIBUTOR_COUNT = 8
 const MAX_COMMIT_DETAIL_COMMITS = MAX_COMMITS
 const MAX_COMMIT_FILES_FOR_QUALITY = 80
+const CODE_LONG_LINE_THRESHOLD = 140
+const CODE_LARGE_FILE_LINE_THRESHOLD = 320
+const CODE_VERY_LARGE_FILE_LINE_THRESHOLD = 550
+const CODE_HIGH_NESTING_THRESHOLD = 5
 const SUPPORTED_COURSE_PLATFORMS = ['인프런', '유데미', '프로그래머스', '공식문서'] as const
 const DEFAULT_COURSE_PLATFORMS: Array<(typeof SUPPORTED_COURSE_PLATFORMS)[number]> = ['인프런', '유데미', '프로그래머스']
 const VERIFIED_COURSE_URLS = new Set([
@@ -251,6 +255,27 @@ type WorkflowSignal = {
   hasTypecheck: boolean
   hasSecurity: boolean
   hasDeploy: boolean
+}
+
+type CodeContentSignals = {
+  analyzedFiles: number
+  analyzedLines: number
+  nonEmptyLines: number
+  commentLines: number
+  longLineCount: number
+  todoCount: number
+  consoleStatementCount: number
+  debuggerCount: number
+  anyTypeCount: number
+  tsIgnoreCount: number
+  errorHandlingTokenCount: number
+  validationTokenCount: number
+  filesWithErrorHandling: number
+  filesWithValidation: number
+  largeFileCount: number
+  veryLargeFileCount: number
+  highNestingFileCount: number
+  maxNestingDepth: number
 }
 
 type CoursePlatform = (typeof SUPPORTED_COURSE_PLATFORMS)[number]
@@ -405,7 +430,12 @@ export async function analyzeGitHubRepository(
   const repository = await fetchGitHubJson<GitHubRepositoryResponse>(repositoryPath)
   const preferredCoursePlatforms = normalizePreferredCoursePlatforms(options.preferredCoursePlatforms)
 
-  const [languages, commits, contributors, { rootFileContents, workflowSignals, codeSamples, rootContents, codebaseProfile }] = await Promise.all([
+  const [
+    languages,
+    commits,
+    contributors,
+    { rootFileContents, workflowSignals, codeSamples, rootContents, codebaseProfile, codeContentSignals },
+  ] = await Promise.all([
     fetchGitHubJson<Record<string, number>>(`${repositoryPath}/languages`),
     fetchGitHubJson<GitHubCommitResponse[]>(
       `${repositoryPath}/commits?per_page=${MAX_COMMITS}&sha=${encodeURIComponent(repository.default_branch)}`,
@@ -435,6 +465,7 @@ export async function analyzeGitHubRepository(
     packageScripts,
     workflowSignals,
     codeSampleCount: codeSamples.length,
+    codeContentSignals,
   })
   const metrics = buildMetrics(repositorySignals)
   const metricBreakdown = buildMetricBreakdown(metrics, repositorySignals)
@@ -522,6 +553,15 @@ export async function analyzeGitHubRepository(
       hasSecurityFile: repositorySignals.hasSecurityFile,
       meaningfulCommitRatio: repositorySignals.meaningfulCommitRatio,
       uniqueAuthors: repositorySignals.uniqueAuthors,
+      codeCommentRatio: repositorySignals.codeCommentRatio,
+      codeLongLineRatio: repositorySignals.codeLongLineRatio,
+      codeTodoPerKLines: repositorySignals.codeTodoPerKLines,
+      codeUnsafeSignalPerKLines: repositorySignals.codeUnsafeSignalPerKLines,
+      codeValidationCoverage: repositorySignals.codeValidationCoverage,
+      codeErrorHandlingCoverage: repositorySignals.codeErrorHandlingCoverage,
+      codeLargeFileRatio: repositorySignals.codeLargeFileRatio,
+      codeVeryLargeFileRatio: repositorySignals.codeVeryLargeFileRatio,
+      codeHighNestingRatio: repositorySignals.codeHighNestingRatio,
     },
     recentCommits: commits.slice(0, 5).map((commit) => ({
       sha: commit.sha.slice(0, 7),
@@ -880,6 +920,137 @@ function countCodeLines(text: string) {
   return text.replace(/\r\n?/g, '\n').split('\n').length
 }
 
+function createEmptyCodeContentSignals(): CodeContentSignals {
+  return {
+    analyzedFiles: 0,
+    analyzedLines: 0,
+    nonEmptyLines: 0,
+    commentLines: 0,
+    longLineCount: 0,
+    todoCount: 0,
+    consoleStatementCount: 0,
+    debuggerCount: 0,
+    anyTypeCount: 0,
+    tsIgnoreCount: 0,
+    errorHandlingTokenCount: 0,
+    validationTokenCount: 0,
+    filesWithErrorHandling: 0,
+    filesWithValidation: 0,
+    largeFileCount: 0,
+    veryLargeFileCount: 0,
+    highNestingFileCount: 0,
+    maxNestingDepth: 0,
+  }
+}
+
+function mergeCodeContentSignals(target: CodeContentSignals, next: CodeContentSignals) {
+  target.analyzedFiles += next.analyzedFiles
+  target.analyzedLines += next.analyzedLines
+  target.nonEmptyLines += next.nonEmptyLines
+  target.commentLines += next.commentLines
+  target.longLineCount += next.longLineCount
+  target.todoCount += next.todoCount
+  target.consoleStatementCount += next.consoleStatementCount
+  target.debuggerCount += next.debuggerCount
+  target.anyTypeCount += next.anyTypeCount
+  target.tsIgnoreCount += next.tsIgnoreCount
+  target.errorHandlingTokenCount += next.errorHandlingTokenCount
+  target.validationTokenCount += next.validationTokenCount
+  target.filesWithErrorHandling += next.filesWithErrorHandling
+  target.filesWithValidation += next.filesWithValidation
+  target.largeFileCount += next.largeFileCount
+  target.veryLargeFileCount += next.veryLargeFileCount
+  target.highNestingFileCount += next.highNestingFileCount
+  target.maxNestingDepth = Math.max(target.maxNestingDepth, next.maxNestingDepth)
+}
+
+function analyzeCodeContentSignals(path: string, text: string): CodeContentSignals {
+  const normalized = text.replace(/\r\n?/g, '\n')
+  const lines = normalized.split('\n')
+  const nonEmptyLineCount = lines.filter((line) => line.trim().length > 0).length
+  const commentLineCount = lines.reduce((sum, line) => sum + (isCommentLikeLine(line) ? 1 : 0), 0)
+  const longLineCount = lines.reduce((sum, line) => sum + (line.length > CODE_LONG_LINE_THRESHOLD ? 1 : 0), 0)
+  const lowerPath = path.toLowerCase()
+  const extension = getPathExtension(lowerPath)
+  const isJsLike = extension === '.ts' || extension === '.tsx' || extension === '.js' || extension === '.jsx'
+  const todoCount = countPatternMatches(normalized, /\b(todo|fixme|hack|xxx)\b/gi)
+  const consoleStatementCount = countPatternMatches(normalized, /\bconsole\.(log|debug|info|warn|error|trace)\b/g)
+  const debuggerCount = countPatternMatches(normalized, /\bdebugger\b/g)
+  const anyTypeCount = isJsLike ? countPatternMatches(normalized, /\bany\b/g) : 0
+  const tsIgnoreCount = isJsLike
+    ? countPatternMatches(normalized, /@ts-ignore|@ts-nocheck|eslint-disable(?:-next-line)?/gi)
+    : 0
+  const errorHandlingTokenCount = countPatternMatches(normalized, /\b(try|catch|throw|finally|except|raise|panic|error)\b/gi)
+  const validationTokenCount = countPatternMatches(normalized, /\b(validate|validation|schema|zod|joi|guard|assert|sanitize|isvalid|safeparse)\b/gi)
+  const maxNestingDepth = calculateMaxBraceDepth(normalized)
+  const largeFileCount = nonEmptyLineCount >= CODE_LARGE_FILE_LINE_THRESHOLD ? 1 : 0
+  const veryLargeFileCount = nonEmptyLineCount >= CODE_VERY_LARGE_FILE_LINE_THRESHOLD ? 1 : 0
+  const highNestingFileCount = maxNestingDepth >= CODE_HIGH_NESTING_THRESHOLD ? 1 : 0
+
+  return {
+    analyzedFiles: 1,
+    analyzedLines: lines.length,
+    nonEmptyLines: nonEmptyLineCount,
+    commentLines: commentLineCount,
+    longLineCount,
+    todoCount,
+    consoleStatementCount,
+    debuggerCount,
+    anyTypeCount,
+    tsIgnoreCount,
+    errorHandlingTokenCount,
+    validationTokenCount,
+    filesWithErrorHandling: errorHandlingTokenCount > 0 ? 1 : 0,
+    filesWithValidation: validationTokenCount > 0 ? 1 : 0,
+    largeFileCount,
+    veryLargeFileCount,
+    highNestingFileCount,
+    maxNestingDepth,
+  }
+}
+
+function isCommentLikeLine(line: string) {
+  const trimmed = line.trim()
+
+  if (!trimmed) {
+    return false
+  }
+
+  return (
+    trimmed.startsWith('//') ||
+    trimmed.startsWith('/*') ||
+    trimmed.startsWith('*') ||
+    trimmed.startsWith('*/') ||
+    trimmed.startsWith('#') ||
+    trimmed.startsWith('--')
+  )
+}
+
+function countPatternMatches(text: string, pattern: RegExp) {
+  return text.match(pattern)?.length ?? 0
+}
+
+function calculateMaxBraceDepth(text: string) {
+  let depth = 0
+  let maxDepth = 0
+
+  for (const char of text) {
+    if (char === '{') {
+      depth += 1
+      if (depth > maxDepth) {
+        maxDepth = depth
+      }
+      continue
+    }
+
+    if (char === '}') {
+      depth = Math.max(0, depth - 1)
+    }
+  }
+
+  return maxDepth
+}
+
 function getDirectoryBucket(path: string) {
   const segments = path.split('/').filter(Boolean)
   return segments.length <= 1 ? '(root)' : segments[0]
@@ -1024,6 +1195,7 @@ function buildRepositorySignals({
   packageScripts,
   workflowSignals,
   codeSampleCount,
+  codeContentSignals,
 }: {
   repository: GitHubRepositoryResponse
   languages: Record<string, number>
@@ -1034,6 +1206,7 @@ function buildRepositorySignals({
   packageScripts: PackageScripts
   workflowSignals: WorkflowSignal[]
   codeSampleCount: number
+  codeContentSignals: CodeContentSignals
 }) {
   const now = Date.now()
   const rootNames = new Set(rootContents.map((item) => item.name.toLowerCase()))
@@ -1149,6 +1322,20 @@ function buildRepositorySignals({
     frameworks.length > 0
       ? frameworks.filter((framework) => !['Linting', 'TypeScript', 'Python', 'Go', 'Rust'].includes(framework))
       : []
+  const analyzedCodeFiles = Math.max(codeContentSignals.analyzedFiles, 1)
+  const analyzedCodeLines = Math.max(codeContentSignals.nonEmptyLines, 1)
+  const codeCommentRatio = codeContentSignals.commentLines / analyzedCodeLines
+  const codeLongLineRatio = codeContentSignals.longLineCount / analyzedCodeLines
+  const codeTodoPerKLines = (codeContentSignals.todoCount * 1000) / analyzedCodeLines
+  const codeConsolePerKLines = (codeContentSignals.consoleStatementCount * 1000) / analyzedCodeLines
+  const codeUnsafeSignalPerKLines =
+    ((codeContentSignals.anyTypeCount + codeContentSignals.tsIgnoreCount * 2 + codeContentSignals.debuggerCount * 2) * 1000) /
+    analyzedCodeLines
+  const codeValidationCoverage = codeContentSignals.filesWithValidation / analyzedCodeFiles
+  const codeErrorHandlingCoverage = codeContentSignals.filesWithErrorHandling / analyzedCodeFiles
+  const codeLargeFileRatio = codeContentSignals.largeFileCount / analyzedCodeFiles
+  const codeVeryLargeFileRatio = codeContentSignals.veryLargeFileCount / analyzedCodeFiles
+  const codeHighNestingRatio = codeContentSignals.highNestingFileCount / analyzedCodeFiles
 
   return {
     repository,
@@ -1180,6 +1367,17 @@ function buildRepositorySignals({
     hasWorkflowDeploy,
     workflowCount: workflowSignals.length,
     codeSampleCount,
+    codeContentSignals,
+    codeCommentRatio,
+    codeLongLineRatio,
+    codeTodoPerKLines,
+    codeConsolePerKLines,
+    codeUnsafeSignalPerKLines,
+    codeValidationCoverage,
+    codeErrorHandlingCoverage,
+    codeLargeFileRatio,
+    codeVeryLargeFileRatio,
+    codeHighNestingRatio,
     hasLockfile,
     hasSecurityFile,
     hasTypedLanguage,
@@ -1194,60 +1392,90 @@ function buildRepositorySignals({
 function buildMetrics(
   signals: ReturnType<typeof buildRepositorySignals>,
 ): DevMetric {
+  const commentQualityBonus =
+    signals.codeCommentRatio >= 0.12 ? 10 : signals.codeCommentRatio >= 0.08 ? 6 : signals.codeCommentRatio >= 0.04 ? 2 : -4
+  const longLinePenalty = Math.min(24, Math.round(signals.codeLongLineRatio * 260))
+  const todoPenalty = Math.min(14, Math.round(signals.codeTodoPerKLines * 1.6))
+  const consolePenalty = Math.min(10, Math.round(signals.codeConsolePerKLines * 1.2))
+  const unsafePenalty = Math.min(16, Math.round(signals.codeUnsafeSignalPerKLines * 1.5))
+  const highNestingPenalty = Math.min(18, Math.round(signals.codeHighNestingRatio * 28))
+  const largeFilePenalty = Math.min(14, Math.round(signals.codeLargeFileRatio * 18))
+  const veryLargeFilePenalty = Math.min(18, Math.round(signals.codeVeryLargeFileRatio * 24))
+  const validationCoverageBonus = Math.round(signals.codeValidationCoverage * 20)
+  const errorHandlingCoverageBonus = Math.round(signals.codeErrorHandlingCoverage * 16)
+
   return {
     readability: clamp(
-      38 +
-        (signals.hasReadme ? 15 : 0) +
-        (signals.repository.description ? 8 : 0) +
-        Math.min(signals.repository.topics?.length ?? 0, 4) * 3 +
-        (signals.hasDocsDir ? 8 : 0) +
-        (signals.hasContributing ? 6 : 0) +
-        Math.round(signals.meaningfulCommitRatio * 15) +
-        (signals.codeSampleCount >= 2 ? 4 : 0),
+      30 +
+        (signals.hasReadme ? 10 : 0) +
+        (signals.repository.description ? 4 : 0) +
+        Math.min(signals.repository.topics?.length ?? 0, 3) * 2 +
+        (signals.hasDocsDir ? 4 : 0) +
+        (signals.hasContributing ? 3 : 0) +
+        Math.round(signals.meaningfulCommitRatio * 8) +
+        commentQualityBonus -
+        longLinePenalty -
+        todoPenalty -
+        Math.min(10, largeFilePenalty) -
+        Math.min(12, veryLargeFilePenalty) +
+        (signals.codeSampleCount >= 2 ? 2 : 0),
       0,
       100,
     ),
     efficiency: clamp(
-      34 +
+      30 +
         Math.min(signals.commits.length, 12) * 2 +
-        (signals.hasBuildScript ? 8 : 0) +
-        (signals.hasTestScript ? 8 : 0) +
+        (signals.hasBuildScript ? 7 : 0) +
+        (signals.hasTestScript ? 7 : 0) +
         (signals.hasLintScript ? 4 : 0) +
-        (signals.hasCi ? 8 : 0) +
-        (signals.hasWorkflowBuild ? 7 : 0) +
-        (signals.hasWorkflowTest ? 7 : 0) +
+        (signals.hasCi ? 7 : 0) +
+        (signals.hasWorkflowBuild ? 6 : 0) +
+        (signals.hasWorkflowTest ? 6 : 0) +
         (signals.hasWorkflowLint ? 4 : 0) +
-        activityBonus(signals.daysSinceLastPush),
+        activityBonus(signals.daysSinceLastPush) -
+        highNestingPenalty -
+        Math.min(10, veryLargeFilePenalty) -
+        consolePenalty -
+        Math.min(8, todoPenalty) +
+        Math.round(signals.codeErrorHandlingCoverage * 4),
       0,
       100,
     ),
     security: clamp(
-      33 +
+      26 +
         (signals.hasCi ? 8 : 0) +
         (signals.hasWorkflowSecurity ? 12 : 0) +
         (signals.hasLockfile ? 10 : 0) +
         (signals.hasTests ? 6 : 0) +
         (signals.hasSecurityFile ? 12 : 0) +
         (signals.hasDocker ? 4 : 0) +
-        (signals.hasTypecheckScript ? 5 : 0),
+        (signals.hasTypecheckScript ? 5 : 0) +
+        validationCoverageBonus +
+        errorHandlingCoverageBonus -
+        unsafePenalty -
+        Math.min(8, todoPenalty),
       0,
       100,
     ),
     architecture: clamp(
-      40 +
+      32 +
         (signals.hasSourceDir ? 10 : 0) +
         (signals.hasInfra ? 10 : 0) +
-        (signals.hasDocker ? 8 : 0) +
+        (signals.hasDocker ? 7 : 0) +
         (signals.stackLabels.length > 1 ? 10 : 0) +
         (signals.mainLanguages.length > 1 ? 6 : 0) +
-        (signals.repository.size > 900 ? 8 : 0) +
+        (signals.repository.size > 900 ? 6 : 0) +
         (signals.hasBuildScript ? 4 : 0) +
-        (signals.codeSampleCount >= 3 ? 4 : 0),
+        (signals.codeSampleCount >= 3 ? 4 : 0) -
+        largeFilePenalty -
+        veryLargeFilePenalty -
+        Math.min(12, highNestingPenalty) +
+        Math.round((1 - signals.codeVeryLargeFileRatio) * 8),
       0,
       100,
     ),
     consistency: clamp(
-      40 +
+      32 +
         (signals.hasLint ? 10 : 0) +
         (signals.hasTestScript ? 6 : 0) +
         (signals.hasTests ? 6 : 0) +
@@ -1255,7 +1483,11 @@ function buildMetrics(
         (signals.hasWorkflowLint ? 6 : 0) +
         (signals.hasWorkflowTypecheck ? 6 : 0) +
         Math.round(signals.meaningfulCommitRatio * 12) +
-        (signals.hasTypedLanguage ? 8 : 0),
+        (signals.hasTypedLanguage ? 8 : 0) +
+        Math.min(10, commentQualityBonus > 0 ? commentQualityBonus : 0) -
+        Math.min(12, longLinePenalty) -
+        Math.min(10, unsafePenalty) -
+        Math.min(8, consolePenalty),
       0,
       100,
     ),
@@ -1267,7 +1499,10 @@ function buildMetrics(
         (signals.hasCi ? 6 : 0) +
         (signals.hasDocker ? 6 : 0) +
         (signals.hasWorkflowDeploy ? 8 : 0) +
-        (signals.hasTypecheckScript ? 4 : 0),
+        (signals.hasTypecheckScript ? 4 : 0) +
+        Math.round(signals.codeValidationCoverage * 6) -
+        Math.min(8, veryLargeFilePenalty) -
+        Math.min(8, unsafePenalty),
       0,
       100,
     ),
@@ -2155,30 +2390,74 @@ function buildHeuristicCleanCodeEvaluation(
   metrics: DevMetric,
   signals: ReturnType<typeof buildRepositorySignals>,
 ): CleanCodeEvaluation {
+  const unsafePenalty = Math.min(18, Math.round(signals.codeUnsafeSignalPerKLines * 1.6))
+  const longLinePenalty = Math.min(16, Math.round(signals.codeLongLineRatio * 220))
+  const largeFilePenalty = Math.min(16, Math.round(signals.codeLargeFileRatio * 20))
+  const veryLargeFilePenalty = Math.min(16, Math.round(signals.codeVeryLargeFileRatio * 24))
+  const nestingPenalty = Math.min(16, Math.round(signals.codeHighNestingRatio * 28))
+  const validationBonus = Math.round(signals.codeValidationCoverage * 24)
+  const errorHandlingBonus = Math.round(signals.codeErrorHandlingCoverage * 22)
+  const todoPenalty = Math.min(10, Math.round(signals.codeTodoPerKLines * 1.4))
+
   const criterionScores: Record<CleanCodeCriterionKey, number> = {
-    naming: clamp(Math.round(metrics.readability * 0.7 + metrics.consistency * 0.3), 0, 100),
+    naming: clamp(
+      Math.round(metrics.readability * 0.6 + metrics.consistency * 0.4 - todoPenalty - Math.min(8, longLinePenalty)),
+      0,
+      100,
+    ),
     singleResponsibility: clamp(
-      Math.round(metrics.architecture * 0.72 + (signals.hasSourceDir ? 8 : -6)),
+      Math.round(
+        metrics.architecture * 0.58 +
+        (1 - signals.codeLargeFileRatio) * 26 +
+        (signals.hasSourceDir ? 4 : -4) -
+        veryLargeFilePenalty -
+        Math.min(10, nestingPenalty),
+      ),
       0,
       100,
     ),
     complexity: clamp(
-      Math.round(metrics.efficiency * 0.6 + metrics.readability * 0.4 - (signals.repository.size > 3000 ? 6 : 0)),
+      Math.round(
+        metrics.efficiency * 0.5 +
+        metrics.readability * 0.18 +
+        (1 - signals.codeHighNestingRatio) * 26 -
+        longLinePenalty -
+        Math.min(8, veryLargeFilePenalty),
+      ),
       0,
       100,
     ),
     errorHandling: clamp(
-      Math.round(metrics.security * 0.68 + (signals.hasTests ? 7 : -7) + (signals.hasCi ? 5 : 0)),
+      Math.round(
+        metrics.security * 0.5 +
+        errorHandlingBonus +
+        (signals.hasTests ? 4 : -4) +
+        (signals.hasCi ? 4 : 0) -
+        unsafePenalty,
+      ),
       0,
       100,
     ),
     validation: clamp(
-      Math.round(metrics.security * 0.56 + metrics.consistency * 0.44 + (signals.hasTests ? 5 : 0)),
+      Math.round(
+        metrics.security * 0.42 +
+        metrics.consistency * 0.2 +
+        validationBonus +
+        (signals.hasTests ? 4 : 0) -
+        Math.min(12, unsafePenalty),
+      ),
       0,
       100,
     ),
     modularity: clamp(
-      Math.round(metrics.architecture * 0.7 + metrics.consistency * 0.3 + (signals.hasSourceDir ? 6 : -4)),
+      Math.round(
+        metrics.architecture * 0.5 +
+        metrics.consistency * 0.2 +
+        (1 - signals.codeVeryLargeFileRatio) * 20 +
+        (1 - signals.codeHighNestingRatio) * 14 +
+        (signals.hasSourceDir ? 4 : -4) -
+        largeFilePenalty,
+      ),
       0,
       100,
     ),
@@ -2209,39 +2488,47 @@ function buildHeuristicCriterionRationale(
   score: number,
   signals: ReturnType<typeof buildRepositorySignals>,
 ) {
+  const longLinePercent = Math.round(signals.codeLongLineRatio * 100)
+  const largeFilePercent = Math.round(signals.codeLargeFileRatio * 100)
+  const nestingPercent = Math.round(signals.codeHighNestingRatio * 100)
+  const validationPercent = Math.round(signals.codeValidationCoverage * 100)
+  const errorHandlingPercent = Math.round(signals.codeErrorHandlingCoverage * 100)
+  const unsafePerK = Math.round(signals.codeUnsafeSignalPerKLines * 10) / 10
+  const todoDensity = Math.round(signals.codeTodoPerKLines * 10) / 10
+
   if (key === 'naming') {
     return score >= 70
-      ? '문서와 커밋 신호가 비교적 명확해 식별자 의미를 추적하기 쉬운 편입니다.'
-      : '설명 신호가 약해 식별자 의도와 책임 경계를 파악하는 데 시간이 더 필요합니다.'
+      ? `코드 가독성 신호가 안정적입니다. (긴 줄 비율 ${longLinePercent}%, TODO 밀도 ${todoDensity}/1k lines)`
+      : `라인 가독성 압력이 높아 네이밍 해석 신뢰도가 낮습니다. (긴 줄 비율 ${longLinePercent}%, TODO 밀도 ${todoDensity}/1k lines)`
   }
 
   if (key === 'singleResponsibility') {
-    return signals.hasSourceDir
-      ? '소스 디렉터리 구분이 있어 역할 경계를 나누려는 구조적 의도가 보입니다.'
-      : '핵심 소스 디렉터리 경계가 약해 역할 분리 신호가 충분하지 않습니다.'
+    return score >= 70
+      ? `파일 크기 분포가 비교적 안정적입니다. (대형 파일 비율 ${largeFilePercent}%, 고중첩 파일 비율 ${nestingPercent}%)`
+      : `대형 파일/중첩도 신호로 역할 경계가 뭉치는 위험이 보입니다. (대형 파일 비율 ${largeFilePercent}%, 고중첩 파일 비율 ${nestingPercent}%)`
   }
 
   if (key === 'complexity') {
-    return signals.hasCi
-      ? '자동화 신호가 있어 복잡도 증가 시 회귀 탐지가 가능한 구조에 가깝습니다.'
-      : '자동화 검증 신호가 약해 복잡한 변경의 회귀를 조기에 포착하기 어렵습니다.'
+    return score >= 70
+      ? `구조 신호 기준 복잡도 압력이 관리 가능한 범위입니다. (고중첩 파일 비율 ${nestingPercent}%, 긴 줄 비율 ${longLinePercent}%)`
+      : `구조 신호 기준 제어 흐름 복잡도 압력이 큽니다. (고중첩 파일 비율 ${nestingPercent}%, 긴 줄 비율 ${longLinePercent}%)`
   }
 
   if (key === 'errorHandling') {
-    return signals.hasTests
-      ? '테스트/검증 신호가 있어 실패 경로를 점검하는 기본선이 보입니다.'
-      : '테스트 근거가 부족해 실패 경로의 안전성을 신뢰하기 어렵습니다.'
+    return score >= 70
+      ? `실패 경로 처리 신호가 코드 전반에 분포합니다. (커버리지 ${errorHandlingPercent}%, unsafe/debug 신호 ${unsafePerK}/1k lines)`
+      : `실패 경로 처리 신호가 얇습니다. (커버리지 ${errorHandlingPercent}%, unsafe/debug 신호 ${unsafePerK}/1k lines)`
   }
 
   if (key === 'validation') {
-    return signals.hasTypedLanguage
-      ? '타입 기반 신호가 있어 입력 경계 검증을 체계화하기 좋은 상태입니다.'
-      : '명시적 타입/스키마 신호가 부족해 입력 경계 검증 전략을 강화할 필요가 있습니다.'
+    return score >= 70
+      ? `입력 검증/가드 패턴이 코드에 폭넓게 존재합니다. (커버리지 ${validationPercent}%)`
+      : `입력 검증 증거가 제한적입니다. (커버리지 ${validationPercent}%)`
   }
 
-  return signals.hasSourceDir
-    ? '모듈 분리의 기본 형태는 보이지만 결합도 관리 기준을 더 선명하게 만들면 좋습니다.'
-    : '모듈 경계 정보가 제한적이어서 변경 영향 범위를 예측하기 어렵습니다.'
+  return score >= 70
+    ? `모듈 경계가 비교적 안정적입니다. (초대형 파일 비율 ${Math.round(signals.codeVeryLargeFileRatio * 100)}%, 고중첩 파일 비율 ${nestingPercent}%)`
+    : `대형/고중첩 파일 집중으로 모듈성 리스크가 남아 있습니다. (초대형 파일 비율 ${Math.round(signals.codeVeryLargeFileRatio * 100)}%, 고중첩 파일 비율 ${nestingPercent}%)`
 }
 
 function buildContributorInsights({
@@ -2883,6 +3170,7 @@ type TarballExtractionResult = {
   codeSamples: RepositoryCodeSample[]
   rootContents: { name: string, type: 'dir' | 'file' }[]
   codebaseProfile: CodebaseProfile
+  codeContentSignals: CodeContentSignals
 }
 
 async function downloadAndExtractTarball(repositoryPath: string, branch: string): Promise<TarballExtractionResult> {
@@ -2913,6 +3201,7 @@ async function downloadAndExtractTarball(repositoryPath: string, branch: string)
         topDirectories: [],
         languages: [],
       },
+      codeContentSignals: createEmptyCodeContentSignals(),
     }
     const rootItems = new Set<string>()
     const directoryHistogram = new Map<string, number>()
@@ -2972,11 +3261,13 @@ async function downloadAndExtractTarball(repositoryPath: string, branch: string)
           const lineCount = countCodeLines(text)
           const directoryBucket = getDirectoryBucket(path)
           const language = detectCodeLanguage(path)
+          const fileContentSignals = analyzeCodeContentSignals(path, text)
 
           result.codebaseProfile.totalCodeFiles += 1
           result.codebaseProfile.totalCodeLines += lineCount
           incrementNumberMap(directoryHistogram, directoryBucket, 1)
           incrementLanguageHistogram(languageHistogram, language, lineCount)
+          mergeCodeContentSignals(result.codeContentSignals, fileContentSignals)
 
           const sample = buildRepositoryCodeSample(path, text)
           const directorySampleCount = sampledDirectoryCounts.get(directoryBucket) ?? 0
