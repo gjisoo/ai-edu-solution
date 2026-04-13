@@ -317,7 +317,6 @@ export function CleanCodeEvaluationCard({
                     <p className="mt-3 text-[14px] leading-[1.7] text-slate-700 font-medium">{contributor.risk}</p>
                   </div>
                 </div>
-
                 <div className="mt-5 rounded-2xl bg-[#fff4ea] px-5 py-4 text-[14px] font-medium leading-[1.7] text-amber-900 border border-amber-100">
                   <span className="font-bold text-amber-600 mr-2">권장 액션:</span>{contributor.recommendation}
                 </div>
