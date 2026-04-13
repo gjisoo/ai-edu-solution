@@ -67,6 +67,7 @@ export function CleanCodeEvaluationCard({
   const weakest = cleanCodeEvaluation.criteria.reduce((worst, current) =>
     current.score < worst.score ? current : worst,
   )
+  const scoreBand = getCleanCodeBand(cleanCodeEvaluation.score)
 
   return (
     <div className="flex flex-col gap-6">
@@ -87,6 +88,14 @@ export function CleanCodeEvaluationCard({
             <p className="mt-2 max-w-xl text-base leading-7 text-slate-600">
               {cleanCodeEvaluation.summary}
             </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className={cn('rounded-full px-3 py-1 text-xs font-semibold', scoreBand.chipClassName)}>
+                {scoreBand.label}
+              </span>
+              <span className="text-xs text-slate-500">
+                {scoreBand.guide}
+              </span>
+            </div>
 
           </div>
 
@@ -103,6 +112,9 @@ export function CleanCodeEvaluationCard({
                 </strong>
                 <span className="mt-1 text-sm font-bold uppercase tracking-widest text-slate-400">
                   Score
+                </span>
+                <span className="mt-1 text-[10px] font-semibold text-slate-400">
+                  권장 목표 85+
                 </span>
               </div>
             </div>
@@ -329,6 +341,30 @@ export function CleanCodeEvaluationCard({
   )
 }
 
+function getCleanCodeBand(score: number) {
+  if (score >= 80) {
+    return {
+      label: '실무 안정권 (80+)',
+      guide: '100점이 아니어도 괜찮습니다. 85점 이상이면 대부분의 실무 유지보수 구간에 진입한 상태입니다.',
+      chipClassName: 'bg-emerald-50 text-emerald-700 border border-emerald-200',
+    }
+  }
+
+  if (score >= 65) {
+    return {
+      label: '보완 권장 구간 (65~79)',
+      guide: '실무 투입은 가능하지만 약점 1~2개를 우선 개선하면 리스크가 크게 줄어듭니다.',
+      chipClassName: 'bg-amber-50 text-amber-700 border border-amber-200',
+    }
+  }
+
+  return {
+    label: '우선 개선 구간 (0~64)',
+    guide: '핵심 규칙, 테스트, 예외 처리부터 먼저 보완하는 것을 권장합니다.',
+    chipClassName: 'bg-rose-50 text-rose-700 border border-rose-200',
+  }
+}
+
 function MiniStat({
   icon: Icon,
   label,
@@ -399,4 +435,3 @@ function formatDateLabel(value: string) {
     hour12: false,
   }).format(date)
 }
-

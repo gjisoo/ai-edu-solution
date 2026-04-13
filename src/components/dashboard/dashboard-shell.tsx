@@ -312,7 +312,7 @@ export function DashboardShell() {
                 label="코드 품질 지수"
                 value={summaryStats.cleanCodeScore}
                 unit="점"
-                hint="실무 투입 가능 척도"
+                hint={getCleanCodeScoreGuide(summaryStats.cleanCodeScore)}
                 onClick={() => setActiveTab('clean-code')}
               />
               <SummaryActionCard
@@ -893,6 +893,18 @@ function rankMetrics(metrics: DevMetric, order: 'asc' | 'desc') {
 
 function getFocusAreaLabel(metrics: DevMetric) {
   return metricLabelMap[rankMetrics(metrics, 'asc')[0]?.key ?? 'readability']
+}
+
+function getCleanCodeScoreGuide(score: number) {
+  if (score >= 80) {
+    return '실무 안정권 (80+) · 85점 이상이면 유지보수 난이도가 비교적 낮은 편입니다.'
+  }
+
+  if (score >= 65) {
+    return '보완 권장 구간 (65~79) · 실무 가능하지만 약점 1~2개는 우선 개선하는 게 좋습니다.'
+  }
+
+  return '우선 개선 구간 (0~64) · 핵심 규칙/테스트/예외처리를 먼저 보완하는 것을 권장합니다.'
 }
 
 function formatEngineLabel(analysis: DashboardAnalysis) {
